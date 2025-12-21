@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints
+# Note: The three main notebooks are tracked (HSA_v5_FINAL_PENALTY_BASED.ipynb,
+# GEE_Climate_Features_by_Facilities.ipynb, GEE_HSA_Weekly_Climate_Lagged.ipynb)
+# All other notebooks are ignored
+*.ipynb
+!HSA_v5_FINAL_PENALTY_BASED.ipynb
+!GEE_Climate_Features_by_Facilities.ipynb
+!GEE_HSA_Weekly_Climate_Lagged.ipynb
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Generated results (keep synthetic data, ignore generated outputs)
+results/*.csv
+results/*.json
+figures/*.png
+figures/*.pdf
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary
+*.tmp
+*.bak
+*~

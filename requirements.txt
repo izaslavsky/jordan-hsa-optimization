@@ -1,0 +1,33 @@
+# Hospital Service Area Optimization and Climate-Health Analysis
+# Python 3.8+
+
+# Core data science
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.10.0
+
+# Geospatial analysis
+geopandas>=0.13.0
+shapely>=2.0.0
+pyproj>=3.5.0
+fiona>=1.9.0
+
+# Google Earth Engine (for climate extraction notebooks)
+earthengine-api>=0.1.350
+
+# Optimization and modeling
+scikit-learn>=1.3.0
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Jupyter notebooks
+jupyter>=1.0.0
+ipykernel>=6.20.0
+
+# Progress bars (optional but helpful for large operations)
+tqdm>=4.65.0
+
+# Statistics (optional)
+statsmodels>=0.14.0
