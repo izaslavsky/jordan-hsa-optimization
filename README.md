@@ -10,7 +10,7 @@ Code and data accompanying the research paper on delineating Hospital Service Ar
 ### Jupyter Notebooks
 
 1. **`HSA_v5_FINAL_PENALTY_BASED.ipynb`** - Main HSA optimization workflow
-   - Delineates Hospital Service Areas using penalty-based gravity model
+   - Delineates Hospital Service Areas using multi-objective greedy optimization
    - Allocates patient populations to healthcare facilities
    - Generates optimized HSA boundaries aligned with administrative divisions
 
@@ -21,7 +21,7 @@ Code and data accompanying the research paper on delineating Hospital Service Ar
 
 3. **`GEE_HSA_Weekly_Climate_Lagged.ipynb`** - Weekly climate aggregation (Google Earth Engine)
    - Aggregates climate data to weekly temporal resolution
-   - Computes lagged climate variables (1-30 day lags)
+   - Computes lagged climate variables (1-20 day lags)
    - Prepares climate features for epidemiological modeling
 
 ### Python Scripts
@@ -39,9 +39,9 @@ Code and data accompanying the research paper on delineating Hospital Service Ar
 All data files use **synthetic patient data** to protect privacy. Boundary and coordinate data are real.
 
 #### Administrative Boundaries (GeoPackage format)
-- `data/adm_boundaries/gov_simpl_20m.gpkg` - 12 governorates
-- `data/adm_boundaries/dis_simpl_20m.gpkg` - 51 districts
-- `data/adm_boundaries/subdis_simpl_20m.gpkg` - 89 subdistricts
+- `data/adm_boundaries/Jordan_governorates_simplified20m.gpkg` - 12 governorates
+- `data/adm_boundaries/Jordan_districts_simplified20m.gpkg` - 51 districts
+- `data/adm_boundaries/Jordan_subdistricts_simplified20m.gpkg` - 89 subdistricts
 - `data/jordan_boundary.gpkg` - National boundary
 
 Source: OpenStreetMap, manually aligned and verified
@@ -102,14 +102,14 @@ This notebook:
 
 For facility-level climate extraction:
 
-```bash
-jupyter notebook GEE_Climate_Features_by_Facilities.ipynb
+```upload to Google Colab and run
+GEE_Climate_Features_by_Facilities.ipynb
 ```
 
 For weekly lagged climate variables:
 
-```bash
-jupyter notebook GEE_HSA_Weekly_Climate_Lagged.ipynb
+```upload to Google Colab and run
+GEE_HSA_Weekly_Climate_Lagged.ipynb
 ```
 
 **Note**: GEE notebooks require Google Earth Engine authentication and may take significant time to extract climate data.
@@ -118,23 +118,23 @@ jupyter notebook GEE_HSA_Weekly_Climate_Lagged.ipynb
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ 1. HSA Optimization (HSA_v5_FINAL_PENALTY_BASED.ipynb)      │
-│    Input:  Patient visits + facility coordinates            │
-│    Output: Optimized HSA boundaries                          │
+│ 1. Climate Extraction (GEE_Climate_Features_by_Facilities)  │
+│    Input:  Facility coordinates                             │
+│    Output: Climate variables by facility buffer zones       │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│ 2. Climate Extraction (GEE_Climate_Features_by_Facilities)  │
-│    Input:  Facility coordinates                              │
-│    Output: Climate variables by facility buffer zones        │
+│ 2. HSA Optimization (HSA_v5_FINAL_PENALTY_BASED.ipynb)      │
+│    Input:   Patient visits + facility coordinates           │
+│    Output: Optimized HSA boundaries                         │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │ 3. Weekly Climate Aggregation (GEE_HSA_Weekly_Climate)      │
-│    Input:  HSA boundaries + climate data                     │
-│    Output: Weekly lagged climate features by HSA             │
+│    Input:  HSA boundaries + climate data                    │
+│    Output: Weekly lagged climate features by HSA            │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -154,7 +154,7 @@ For standalone administrative boundaries with full documentation, see:
 
 ### HSA Delineation
 
-The penalty-based gravity model optimizes Hospital Service Areas by:
+The multi-objective greedy algorithm optimizes Hospital Service Areas by:
 
 1. **Gravity model**: Patients allocated to facilities based on distance impedance
 2. **Penalty constraints**: Penalizes HSAs that cross administrative boundaries
