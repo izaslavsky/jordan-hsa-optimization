@@ -170,7 +170,7 @@ Climate variables extracted from Google Earth Engine:
 
 Temporal aggregation:
 - Weekly means/sums computed from daily data
-- Lagged features: 1-30 day lags to capture delayed health effects
+- Lagged features: 1-20 day lags to capture delayed health effects
 - Spatial aggregation: Mean values within facility buffer zones or HSA polygons
 
 ## 📝 Citation
@@ -180,8 +180,8 @@ If you use this code or data in your research, please cite:
 ```bibtex
 @software{hsa_climate_health_2024,
   title = {Hospital Service Area Optimization and Climate-Health Analysis},
-  author = {{Author Names}},
-  year = {2024},
+  author = {{Ilya Zaslavsky}},
+  year = {2025},
   url = {https://github.com/izaslavsky/HSA_algo_public},
   note = {GitHub repository}
 }
