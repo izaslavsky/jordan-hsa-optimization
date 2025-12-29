@@ -26,6 +26,7 @@ Code and data accompanying the research paper on delineating Hospital Service Ar
 
 ### Python Scripts
 
+#### HSA Optimization
 - **`hsa_optimization.py`** - Core HSA optimization algorithm
   - HSAOptimizer class with penalty-based gravity model
   - Population allocation and boundary delineation functions
@@ -33,6 +34,18 @@ Code and data accompanying the research paper on delineating Hospital Service Ar
 - **`patient_allocation.py`** - Patient trajectory analysis
   - Gravity model for patient allocation to facilities
   - Distance-based travel impedance calculations
+
+#### Machine Learning Modeling
+- **`prepare_ml_dataset.py`** - Dataset preparation for ML modeling
+  - Merges climate data (108 files) with disease surveillance data
+  - Feature engineering and selection (reduces 144 → 33 climate features)
+  - Creates train/validation/test splits with temporal separation
+
+- **`train_improved_models.py`** - ML models for disease prediction
+  - Predicts weekly diarrheal disease counts from climate + disease history
+  - Autoregressive features (lag-1, lag-2) + top 10 climate variables
+  - Trains 5 models: Ridge, Lasso, Random Forest, Gradient Boosting, XGBoost
+  - Best performance: R² = 0.526 (Gradient Boosting)
 
 ### Data Files
 
@@ -114,6 +127,28 @@ GEE_HSA_Weekly_Climate_Lagged.ipynb
 
 **Note**: GEE notebooks require Google Earth Engine authentication and may take significant time to extract climate data.
 
+**3. Machine Learning Modeling**
+
+After completing steps 1-3 above, run the ML modeling pipeline:
+
+```bash
+# Step 1: Prepare ML dataset (merges climate + disease data)
+python prepare_ml_dataset.py
+
+# Step 2: Train models
+python train_improved_models.py
+```
+
+**Outputs**:
+- `out/modeling/modeling_dataset_train.csv` - Training set (288 samples)
+- `out/modeling/modeling_dataset_val.csv` - Validation set (36 samples)
+- `out/modeling/modeling_dataset_test.csv` - Test set (1,080 samples)
+- `out/modeling/results_improved/improved_model_comparison.csv` - Model performance (25 models)
+
+**Expected Results**: Best model achieves R² = 0.526 (Gradient Boosting with 12 features)
+
+For detailed methodology, see **[MODELING_METHODS.md](MODELING_METHODS.md)**
+
 ## 📊 Workflow Overview
 
 ```
@@ -135,6 +170,20 @@ GEE_HSA_Weekly_Climate_Lagged.ipynb
 │ 3. Weekly Climate Aggregation (GEE_HSA_Weekly_Climate)      │
 │    Input:  HSA boundaries + climate data                    │
 │    Output: Weekly lagged climate features by HSA            │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 4. ML Dataset Preparation (prepare_ml_dataset.py)           │
+│    Input:  Weekly climate (108 files) + disease counts      │
+│    Output: Train/validation/test datasets                   │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│ 5. ML Modeling (train_improved_models.py)                   │
+│    Input:  Prepared datasets (climate + AR features)        │
+│    Output: Trained models + predictions (R² = 0.526)        │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -172,6 +221,36 @@ Temporal aggregation:
 - Weekly means/sums computed from daily data
 - Lagged features: 1-20 day lags to capture delayed health effects
 - Spatial aggregation: Mean values within facility buffer zones or HSA polygons
+
+### Machine Learning Modeling
+
+Predictive models for weekly diarrheal disease incidence using climate variables and disease history:
+
+**Key Innovation**: Autoregressive features (previous week's disease counts) combined with climate variables
+
+**Approach**:
+1. **Dataset Preparation** (`prepare_ml_dataset.py`)
+   - Merges 108 climate CSV files with disease surveillance data
+   - Feature selection: Reduces 144 → 33 climate features to prevent overfitting
+   - Temporal train/validation/test split (no data leakage)
+
+2. **Model Training** (`train_improved_models.py`)
+   - **Feature Sets**: 5 combinations tested (AR-only, AR+climate, AR+temporal+climate)
+   - **Models**: Ridge, Lasso, Random Forest, Gradient Boosting, XGBoost
+   - **Best Model**: Gradient Boosting with 12 features (2 AR + 10 climate)
+   - **Performance**: Validation R² = 0.526, RMSE = 12.66 cases
+
+**Feature Importance**:
+- Autoregressive features (lag-1, lag-2): ~93% of predictive power
+- Climate variables (top 10): ~7% additional improvement
+- Top climate predictors: Water deficit, temperature range, heat stress, humidity
+
+**Operational Use**:
+- 1-week ahead forecasting of disease burden
+- Requires: Previous 2 weeks disease counts + current week climate data
+- Expected performance: R² ≈ 0.52, RMSE ≈ 12-13 cases
+
+For detailed methodology, see **[MODELING_METHODS.md](MODELING_METHODS.md)**
 
 ## 📝 Citation
 
