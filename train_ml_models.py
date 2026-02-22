@@ -105,7 +105,8 @@ test_candidate = DATA_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_test.csv"
 TRAIN_FILE = train_candidate if train_candidate.exists() else DATA_DIR / "modeling_dataset_train.csv"
 VAL_FILE = val_candidate if val_candidate.exists() else DATA_DIR / "modeling_dataset_val.csv"
 TEST_FILE = test_candidate if test_candidate.exists() else DATA_DIR / "modeling_dataset_test.csv"
-METADATA_FILE = DATA_DIR / "modeling_dataset_metadata.json"
+metadata_candidate = DATA_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_metadata.json"
+METADATA_FILE = metadata_candidate if metadata_candidate.exists() else DATA_DIR / "modeling_dataset_metadata.json"
 np.random.seed(RANDOM_SEED)
 
 # Model configuration

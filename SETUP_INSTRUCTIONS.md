@@ -210,7 +210,7 @@ This will open Jupyter in your web browser at `http://localhost:8888`
 1. `HSA_v6_FINAL.ipynb` - Delineate HSA boundaries
 2. `GEE_Climate_Features_by_Facilities.ipynb` - Extract climate data by facility
 3. `GEE_HSA_Weekly_Climate_Lagged.ipynb` - Aggregate weekly climate features
-4. `Patient_Allocation_for_Modeling.ipynb` - Allocate population to avoid double counting
+4. `Patient_Allocation_Probabilistic.ipynb` - Probabilistic population allocation (1-3 hours)
 5. `Generate_Modeling_Dataset.ipynb` - Build `{NETWORK}_{MODE}_modeling_dataset.csv`
 6. `compare_delineations.ipynb` - Optional comparison across delineation modes
 7. `run_climate_health_modeling.ipynb` - Train and evaluate models
@@ -218,7 +218,8 @@ This will open Jupyter in your web browser at `http://localhost:8888`
 ### Expected Runtime
 
 - **HSA Optimization**: 5-15 minutes (depends on dataset size and optimization parameters)
-- **Climate Extraction (GEE)**: 30 minutes to 2+ hours (depends on spatial extent, temporal range, and GEE server load)
+- **Climate Extraction (GEE)**: Highly variable — from 30 minutes to many hours. GEE server load is unpredictable; tasks may queue, time out, or need to be resubmitted. The chunked local notebook mitigates memory errors on large polygons.
+- **Population Allocation**: 1-3 hours (processes ~250,000 population pixels against all facilities using gravity model)
 ---
 ## Data Files
 
@@ -238,6 +239,8 @@ All necessary data files are included in the `data/` directory:
 - `data/adm_boundaries/*.gpkg` - Governorate, district, and subdistrict boundaries
 - `data/jordan_boundary.gpkg` - National boundary
 - `data/jordan_governorates.gpkg` - Governorate boundaries (used in GOVERNORATE modes)
+
+For standalone administrative boundaries with full documentation, see the separate repository: [jordan-administrative-boundaries](https://github.com/izaslavsky/jordan-administrative-boundaries).
 
 **Viewing boundaries**: Open `.gpkg` files in QGIS or use GeoPandas:
 ```python

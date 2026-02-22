@@ -216,7 +216,7 @@ def main():
     parser.add_argument(
         "--output-csv",
         default=None,
-        help="Path for comparison output CSV (defaults to out/{network}_spatial_methods_comparison.csv)",
+        help="Path for comparison output CSV (defaults to out/{network}_{hsa_mode}_spatial_methods_comparison.csv)",
     )
     args = parser.parse_args()
     network = args.network
@@ -384,7 +384,7 @@ def main():
     print("\n" + df.to_string(index=False))
 
     # Save
-    output_csv = args.output_csv or f"out/{network}_spatial_methods_comparison.csv"
+    output_csv = args.output_csv or f"out/{network}_{mode}_spatial_methods_comparison.csv"
     df.to_csv(output_csv, index=False)
     print(f"\nSaved to: {output_csv}")
 

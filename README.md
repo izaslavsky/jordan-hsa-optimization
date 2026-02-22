@@ -15,7 +15,7 @@ Code and data accompanying the research paper on delineating Hospital Service Ar
    - Extracts climate variables around healthcare facility buffers
    - Sources: CHIRPS (precipitation), ERA5-Land (temperature), TerraClimate (water balance)
    - Creates facility-level climate datasets and computes climate clusters for HSA delineation and health analysis
-   - **Local notebook available**: runs without Colab, but requires Earth Engine auth and (optionally) Drive API OAuth if you use the automated export/download steps
+   - **Local version**: `GEE_local_Climate_Features_by_Facilities.ipynb` — runs without Colab, but requires Earth Engine auth and (optionally) Drive API OAuth if you use the automated export/download steps
 
 2. **`HSA_v6_FINAL.ipynb`** - Main HSA optimization workflow
    - Delineates Hospital Service Areas using unified scoring system with mode-specific weight profiles
@@ -31,13 +31,14 @@ Code and data accompanying the research paper on delineating Hospital Service Ar
    - Computes lagged climate variables (1-20 day lags)
    - Exports 6 CSV files per HSA (precipitation, temperature, soil moisture, evaporation, water balance, elevation)
    - **Output location**: If running on Google Colab, users must download exported CSVs from Google Drive to `out/DRIVE_CLIMATE_BY_HSA_DOWNLOAD/FINAL_HSA_CLIMATE/`
-   - **Local notebook available**: runs without Colab, but requires Earth Engine auth and (optionally) Drive API OAuth if you use the automated export/download steps
+   - **Local versions**: `GEE_local_HSA_Weekly_Climate_Lagged.ipynb` (standard) and `GEE_local_HSA_Weekly_Climate_Lagged_chunked.ipynb` (chunked). Both run without Colab but require Earth Engine auth and (optionally) Drive API OAuth. The **chunked** version splits weeks into 13-week chunks to avoid GEE memory errors on large HSA polygons, with an additional step to concatenate and validate chunk outputs.
 
-4. **`Patient_Allocation_for_Modeling.ipynb`** - Patient allocation for overlapping HSAs
+4. **`Patient_Allocation_Probabilistic.ipynb`** - Probabilistic population allocation for overlapping HSAs
+   - Two-step process: (1) allocate population pixels to ALL facilities via gravity model, (2) aggregate facility populations to HSA anchors using three-case logic
+   - Gravity model distributes each pixel's population proportionally to facility attractiveness (capacity^α / distance^β)
    - Eliminates double/triple counting when HSAs overlap
-   - Gravity model assigns each population pixel to exactly ONE facility
    - **Required for**: Computing disease rates and weekly disease counts by HSA
-   - Outputs: `pixel_allocations_{NETWORK}_{MODE}.csv` and `hsa_allocated_patients_{NETWORK}_{MODE}.csv`
+   - Outputs: `pixel_allocations_{NETWORK}_{MODE}.csv`, `{NETWORK}_{MODE}_hsa_populations_probabilistic.csv`, and `{NETWORK}_{MODE}_facility_hsa_assignments.csv`
 
 5. **`Generate_Modeling_Dataset.ipynb`** - Complete modeling dataset generation
    - Orchestrates the complete dataset preparation pipeline
@@ -69,9 +70,9 @@ Code and data accompanying the research paper on delineating Hospital Service Ar
 - **`hsa_objective_analysis.py`** - HSA results analysis
   - Statistical analysis and visualizations for all five optimization modes
 
-- **`patient_allocation.py`** - Patient allocation for overlapping HSAs
+- **`patient_allocation.py`** - Probabilistic population allocation for overlapping HSAs
   - **Purpose**: Eliminates double/triple counting when HSAs overlap
-  - Gravity model assigns each population pixel to exactly ONE facility
+  - **Two-step process**: (1) Gravity model allocates each population pixel probabilistically across ALL reachable facilities based on attractiveness (capacity^α / distance^β); (2) facility-level populations are aggregated to HSA anchors using three-case logic (inside one HSA, outside all HSAs, or in overlapping HSAs)
   - Includes parallel processing for 3-4x speedup on multi-core systems
   - **Required for**: Computing disease rates and weekly disease counts by HSA
   - **Not required for**: HSA boundary delineation (only needed for downstream disease modeling)
@@ -92,8 +93,20 @@ Code and data accompanying the research paper on delineating Hospital Service Ar
 - **`climate_health_modeling.py`** - Basic climate-health EDA and preprocessing
 - **`climate_health_modeling_comprehensive.py`** - Comprehensive modeling with variable pruning
 - **`climate_health_modeling_parsimonious.py`** - Theory-driven parsimonious models
+- **`climate_health_modeling_anomalies.py`** - Tests if climate anomalies predict disease anomalies (removes seasonal means to isolate climate signal)
 - **`train_ml_models.py`** - Baseline ML model training (multiple model families)
 - **`train_improved_models.py`** - Improved ML models with alternative feature sets
+
+#### Sensitivity Analysis (called by `run_climate_health_modeling.ipynb`)
+- **`08_climate_ar_decomposition.py`** - Hierarchical variance decomposition (AR vs seasonal vs climate contributions)
+- **`09_spatial_unit_comparison.py`** - Compare model performance across spatial units (HSA vs governorate vs country)
+- **`10_spatial_autocorrelation.py`** - Moran's I test for spatial autocorrelation in model residuals
+- **`11_gravity_sensitivity_analysis.py`** - Gravity model parameter sensitivity (alpha/beta grid + bootstrap noise)
+- **`12_extreme_event_analysis.py`** - Compare climate means vs extreme indicators as predictors
+- **`13_exclusion_analysis.py`** - Allocation probability distribution and population coverage tiers
+- **`14_climate_exclusion_test.py`** - Population subgroup climate test (high vs low connectivity)
+- **`15_weight_sensitivity_analysis.py`** - Optimization weight perturbation sensitivity
+- **`16_within_hsa_heterogeneity.py`** - Within-HSA climate heterogeneity analysis (ICC computation)
 
 #### Spatial Methods Comparison
 - **`compare_spatial_methods_v2.py`** - Compare HSA delineation methods
@@ -299,30 +312,35 @@ out/DRIVE_CLIMATE_BY_HSA_DOWNLOAD/FINAL_HSA_CLIMATE/
 
 The notebook exports 6 CSV files per HSA (precipitation, temperature, soil moisture, evaporation, water balance, elevation).
 
-**Note**: GEE notebooks require Google Earth Engine authentication and may take significant time to extract climate data.
+**Note**: GEE notebooks require Google Earth Engine authentication. Climate extraction runtime is highly variable (30 minutes to many hours) depending on GEE server load; tasks may queue, time out, or need to be resubmitted.
 
-**3. Patient Allocation (Required for Disease Modeling)**
+**3. Probabilistic Population Allocation (Required for Disease Modeling)**
 
-HSAs created in step 2 are **overlapping circular regions** around facilities. Before computing disease rates or weekly disease counts, you must allocate each population pixel to exactly ONE facility to prevent double/triple counting.
+HSAs created in step 2 are **overlapping circular regions** around facilities. Before computing disease rates or weekly disease counts, you must allocate population to facilities and then to HSAs to prevent double/triple counting.
 
-Open and run `Patient_Allocation_for_Modeling.ipynb`:
+Open and run `Patient_Allocation_Probabilistic.ipynb`:
 
 ```bash
-jupyter notebook Patient_Allocation_for_Modeling.ipynb
+jupyter notebook Patient_Allocation_Probabilistic.ipynb
 ```
 
-This notebook:
-- Loads optimized HSA boundaries (GeoJSON output from HSA_v6_FINAL.ipynb)
-- Applies gravity model to assign each population pixel to exactly one facility
-- Aggregates allocated populations by HSA (no overlap)
-- Saves results as CSV for disease rate calculations
+This notebook implements a **two-step allocation process**:
+
+**Step 1 — Pixels to ALL facilities (probabilistic)**: Each population pixel's population is distributed across ALL reachable facilities based on gravity model probabilities: P(facility) = Volume^α / Distance^β, normalized across all facilities within 100km.
+
+**Step 2 — Facilities to HSA anchors (three-case logic)**: Facility-level populations are aggregated to HSAs:
+- Facility inside exactly 1 HSA → 100% to that HSA
+- Facility outside all HSAs → assigned to nearest HSA anchor within 100km
+- Facility inside 2+ overlapping HSAs → proportional split using gravity model
 
 **Why this is necessary**:
 - HSA boundaries overlap (facility service areas are circles that intersect)
 - Same person lives in multiple overlapping HSAs
 - Without allocation: person counted 2-3 times when computing disease rates
-- With allocation: each person assigned to ONE facility based on distance + facility size
+- With probabilistic allocation: each pixel's population is distributed proportionally across nearby facilities, then aggregated to HSAs
 - Result: Accurate denominators for disease rate calculations
+
+**Runtime**: 1-3 hours (processes ~250,000 population pixels against all facilities).
 
 **When to skip**: Only needed if you're doing disease modeling. Not required for HSA boundary visualization or spatial analysis.
 
@@ -330,7 +348,7 @@ This notebook:
 
 **4. Generate Modeling Dataset**
 
-After completing steps 1-3 above (HSA optimization, climate extraction, patient allocation), generate the complete modeling dataset:
+After completing steps 1-3 above (HSA optimization, climate extraction, population allocation), generate the complete modeling dataset:
 
 ```bash
 jupyter notebook Generate_Modeling_Dataset.ipynb
@@ -340,7 +358,7 @@ This notebook orchestrates the complete dataset preparation pipeline:
 
 1. **Checks prerequisites**:
    - HSA boundaries from step 1
-   - Patient allocations from step 3
+   - Population allocations from step 3
    - Climate CSVs downloaded from Google Drive (step 2)
    - Patient visit data
 
@@ -361,7 +379,7 @@ This notebook orchestrates the complete dataset preparation pipeline:
 
 **Prerequisites**:
 - ✅ HSA boundaries generated (HSA_v6_FINAL.ipynb)
-- ✅ Patient allocation completed (Patient_Allocation_for_Modeling.ipynb)
+- ✅ Population allocation completed (Patient_Allocation_Probabilistic.ipynb)
 - ✅ Climate files downloaded to `out/DRIVE_CLIMATE_BY_HSA_DOWNLOAD/FINAL_HSA_CLIMATE/`
 
 ---
@@ -377,10 +395,12 @@ jupyter notebook run_climate_health_modeling.ipynb
 This notebook orchestrates the modeling pipeline by calling:
 - `climate_health_modeling_comprehensive.py` - Variable pruning and model comparison
 - `climate_health_modeling_parsimonious.py` - Theory-driven small models
+- `climate_health_modeling_anomalies.py` - Climate anomaly vs disease anomaly analysis
 - `train_ml_models.py` - Baseline ML models
 - `train_improved_models.py` - Alternative feature sets
+- Sensitivity analysis scripts (`08_climate_ar_decomposition.py` through `16_within_hsa_heterogeneity.py`) — see **Sensitivity Analysis** section above
 
-**See**: `CLIMATE_HEALTH_MODELING.md` and `MODELING_RESULTS.md` for methodology and results.
+**See**: `CLIMATE_HEALTH_MODELING.md` for methodology and results.
 
 ---
 
@@ -401,9 +421,13 @@ This notebook calls `compare_spatial_methods_v2.py` to compare:
 **See**: `SPATIAL_METHODS_COMPARISON.md` for methodology and results.
 
 
+## Notebook Text Outputs
+
+All notebooks include a final cell that exports a summary of their outputs (tables, statistics, key results) to `out/textresults/` as markdown files. These provide a text-based record of notebook results for version control and review without re-running notebooks.
+
 ## Synthetic Data Caveat
-The included synthetic dataset enables reproduction of HSA delineation 
-but is not suitable for climate-health modeling validation, as synthetic health outcomes lack temporal autocorrelation 
+The included synthetic dataset enables reproduction of HSA delineation
+but is not suitable for climate-health modeling validation, as synthetic health outcomes lack temporal autocorrelation
 and climate associations present in real data.
 
 ## 📊 Workflow Overview
@@ -426,13 +450,13 @@ and climate associations present in real data.
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Disease Modeling Workflow** (Steps 3-7 - requires patient allocation):
+**Disease Modeling Workflow** (Steps 3-7 - requires population allocation):
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ 3. Patient Allocation (Patient_Allocation_for_Modeling)     │
+│ 3. Population Allocation (Patient_Allocation_Probabilistic)  │
 │    Input:  HSA boundaries + population raster               │
-│    Output: pixel_allocations_*.csv, hsa_allocated_*.csv     │
-│    WHY:    HSAs overlap - prevents double counting          │
+│    Output: pixel_allocations_*.csv, hsa_populations_*.csv   │
+│    WHY:    HSAs overlap - probabilistic gravity allocation   │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -454,7 +478,7 @@ and climate associations present in real data.
 ║    │ 5a. Weekly Disease Counts                         │    ║
 ║    │     Script: generate_weekly_disease_counts_       │    ║
 ║    │             adjusted.py                           │    ║
-║    │     Input:  Patient allocations + visit data      │    ║
+║    │     Input:  Population allocations + visit data    │    ║
 ║    │     Output: Weekly disease counts per HSA         │    ║
 ║    └───────────────────────────────────────────────────┘    ║
 ║                            │                                ║
@@ -472,6 +496,7 @@ and climate associations present in real data.
 │ 6. Climate-Health Modeling (run_climate_health_modeling)    │
 │    Input:  Modeling dataset (climate + AR features)         │
 │    Output: Trained models + metrics (out/modeling/)         │
+│    Also runs: Sensitivity analyses (scripts 08-16)         │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -512,6 +537,28 @@ The unified scoring system optimizes Hospital Service Areas using five different
 - No more viable facilities (best score ≤ 0)
 - All facilities selected (rare)
 
+### Probabilistic Population Allocation
+
+Because HSAs are overlapping circular regions, population must be allocated to facilities and then aggregated to HSAs to prevent double-counting in disease rate calculations. This is a two-step probabilistic process:
+
+**Step 1 — Pixel to ALL Facilities (Probabilistic)**:
+Each population pixel (100m resolution) is distributed across all reachable facilities using a gravity model:
+
+P(facility_i | pixel) = (Volume_i^α / Distance_i^β) / Σ_j (Volume_j^α / Distance_j^β)
+
+Where α = 0.75 (facility size weight), β = 1.5 (distance decay), and maximum distance = 100km. This allocates population to all ~188 facilities in the network, not just HSA anchors.
+
+**Step 2 — Facility to HSA Aggregation (Three-Case Logic)**:
+After pixel-to-facility allocation, facility-level populations are aggregated to HSAs:
+
+| Case | Condition | Assignment |
+|------|-----------|------------|
+| Case 1 | Facility inside exactly 1 HSA | 100% to that HSA |
+| Case 2 | Facility outside all HSAs | Nearest HSA anchor within 100km |
+| Case 3 | Facility inside 2+ overlapping HSAs | Proportional split using gravity model |
+
+Facilities beyond 100km from any HSA anchor are excluded and reported.
+
 ### Climate Feature Engineering
 
 Climate variables extracted from Google Earth Engine:
@@ -539,7 +586,7 @@ Predictive models for weekly disease incidence using climate variables and disea
    - Parsimonious theory-driven models (`climate_health_modeling_parsimonious.py`)
    - Multiple ML families: Ridge, Lasso, Random Forest, Gradient Boosting, XGBoost
 
-**See** `CLIMATE_HEALTH_MODELING.md` and `MODELING_RESULTS.md` for detailed methodology and results.
+**See** `CLIMATE_HEALTH_MODELING.md` for detailed methodology and results.
 
 ## 📝 Citation
 

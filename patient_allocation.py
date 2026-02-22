@@ -2,16 +2,23 @@
 Patient Allocation Module - Gravity Model Implementation
 =========================================================
 
-Eliminates double-counting by allocating each population pixel to exactly ONE facility
-using a gravity model based on distance and facility size.
+Supports two allocation modes:
+1. HARD ALLOCATION: Each pixel assigned to ONE facility (max attractiveness)
+2. PROBABILISTIC ALLOCATION: Each pixel's population SPLIT across ALL reachable facilities
+   based on gravity model probabilities
 
-Usage:
+Usage (Hard Allocation - Original):
     allocator = PatientAllocator(pop_raster_path, facilities_gdf, params)
     allocated = allocator.allocate_all_pixels()
     hsa_summary = allocator.aggregate_by_hsa(allocated, hsa_anchors)
 
+Usage (Probabilistic Allocation - New):
+    allocator = PatientAllocator(pop_raster_path, facilities_gdf, params)
+    allocated = allocator.allocate_all_pixels_probabilistic()
+    hsa_summary = allocator.aggregate_facilities_to_hsas(allocated, hsa_anchors)
+
 Author: HSA Research Team
-Date: 2025-11-27
+Date: 2025-11-27 (Updated 2026-01)
 """
 
 import numpy as np
@@ -250,6 +257,213 @@ class PatientAllocator:
             'num_candidates': len(valid_distances)
         }
 
+    def allocate_pixel_probabilistic(self, pixel_lon: float, pixel_lat: float,
+                                      pixel_pop: float) -> Optional[Dict]:
+        """
+        Allocate one pixel to ALL facilities within range using probabilistic allocation.
+
+        Instead of assigning population to ONE facility (hard assignment), this method
+        SPLITS the pixel's population across ALL reachable facilities based on their
+        gravity model probabilities.
+
+        Args:
+            pixel_lon, pixel_lat: Pixel coordinates
+            pixel_pop: Population in pixel
+
+        Returns:
+            Dict with keys:
+                - 'lon', 'lat': pixel coordinates
+                - 'total_population': total pixel population
+                - 'allocations': List of {facility_id, allocated_pop, probability, distance_km}
+            Returns None if no facilities in range.
+        """
+        # Use KD-Tree to find candidate facilities within max distance
+        max_dist_degrees = self.params['max_distance_km'] / 90.0
+        candidate_indices = self.kdtree.query_ball_point([pixel_lon, pixel_lat], max_dist_degrees)
+
+        if not candidate_indices:
+            return None
+
+        # Get candidate rows
+        candidate_rows = self.facilities.iloc[candidate_indices]
+
+        # Calculate haversine distances (vectorized)
+        distances = GeoUtils.haversine_km(
+            pixel_lon, pixel_lat,
+            candidate_rows['lon'].values,
+            candidate_rows['lat'].values
+        )
+
+        # Filter by exact max distance
+        valid_mask = distances <= self.params['max_distance_km']
+
+        if not valid_mask.any():
+            return None
+
+        # Apply valid mask
+        valid_distances = distances[valid_mask]
+        valid_rows = candidate_rows[valid_mask]
+
+        # Prevent division by zero
+        valid_distances = np.maximum(valid_distances, 0.01)
+
+        # Calculate attractiveness for each facility
+        volume_alpha = valid_rows['volume_alpha'].values
+        attractiveness = volume_alpha / (valid_distances ** self.params['beta'])
+
+        # Calculate probabilities (sum to 1)
+        total_attr = attractiveness.sum()
+        probabilities = attractiveness / total_attr
+
+        # Calculate allocated population for each facility
+        allocated_pops = probabilities * pixel_pop
+
+        # Build allocations list
+        allocations = []
+        for i in range(len(valid_rows)):
+            allocations.append({
+                'facility_id': valid_rows.iloc[i]['HealthFacility'],
+                'allocated_pop': allocated_pops[i],
+                'probability': probabilities[i],
+                'distance_km': valid_distances[i]
+            })
+
+        return {
+            'lon': pixel_lon,
+            'lat': pixel_lat,
+            'total_population': pixel_pop,
+            'allocations': allocations,
+            'num_candidates': len(allocations)
+        }
+
+    def allocate_all_pixels_probabilistic(self, progress_interval: int = 50000,
+                                           return_pixel_allocations: bool = True) -> Tuple[pd.DataFrame, Optional[pd.DataFrame]]:
+        """
+        Allocate all populated pixels using PROBABILISTIC allocation.
+
+        Unlike allocate_all_pixels() which assigns each pixel to ONE facility,
+        this method SPLITS each pixel's population across ALL reachable facilities
+        based on gravity model probabilities.
+
+        Args:
+            progress_interval: Print progress every N pixels
+            return_pixel_allocations: If True, also return pixel-level allocations
+                                      showing PRIMARY facility for each pixel
+
+        Returns:
+            Tuple of (facility_df, pixel_df):
+                - facility_df: DataFrame with columns [facility_id, allocated_population]
+                - pixel_df: DataFrame with columns [lon, lat, population, facility_id, probability, num_candidates]
+                            Shows PRIMARY (max probability) facility for each pixel
+        """
+        print(f"\nAllocating population pixels to facilities (PROBABILISTIC)...")
+
+        # Track allocations per facility
+        facility_allocations = {}  # facility_id -> total allocated population
+        pixel_allocations = []  # List for pixel-level data
+        total_pop = 0
+        allocated_pop = 0
+        unallocated_pop = 0
+        pixel_count = 0
+
+        # Open population raster
+        with rasterio.open(self.pop_raster_path) as src:
+            pop_data = src.read(1)
+            transform = src.transform
+
+            height, width = pop_data.shape
+            sample_rate = self.params['sample_rate']
+
+            print(f"  Raster size: {height} x {width} = {height*width:,} pixels")
+            if sample_rate > 1:
+                print(f"  Sampling rate: 1/{sample_rate} (processing every {sample_rate}th pixel)")
+
+            first_pixel_logged = False
+
+            # Iterate through pixels
+            for row in range(0, height, sample_rate):
+                for col in range(0, width, sample_rate):
+                    pop = pop_data[row, col]
+
+                    if pop <= 0:
+                        continue
+
+                    # Convert pixel coordinates to geographic coordinates
+                    lon, lat = transform * (col + 0.5, row + 0.5)
+
+                    if not first_pixel_logged:
+                        print(f"  First populated pixel: lon={lon:.6f}, lat={lat:.6f}, pop={pop:.1f}")
+                        first_pixel_logged = True
+
+                    total_pop += pop
+                    pixel_count += 1
+
+                    # Probabilistic allocation
+                    allocation = self.allocate_pixel_probabilistic(lon, lat, pop)
+
+                    if allocation:
+                        allocated_pop += pop
+                        # Add to facility totals
+                        for alloc in allocation['allocations']:
+                            fac_id = alloc['facility_id']
+                            if fac_id not in facility_allocations:
+                                facility_allocations[fac_id] = 0
+                            facility_allocations[fac_id] += alloc['allocated_pop']
+
+                        # Track pixel-level allocation (primary facility)
+                        if return_pixel_allocations:
+                            # Find primary (max probability) facility
+                            primary = max(allocation['allocations'], key=lambda x: x['probability'])
+                            # Get facility_idx for compatibility with old format
+                            fac_match = self.facilities[self.facilities['HealthFacility'] == primary['facility_id']]
+                            fac_idx = fac_match.index[0] if not fac_match.empty else -1
+                            pixel_allocations.append({
+                                'lon': lon,
+                                'lat': lat,
+                                'population': pop,
+                                'facility_idx': fac_idx,
+                                'facility_id': primary['facility_id'],
+                                'probability': primary['probability'],
+                                'num_candidates': allocation['num_candidates']
+                            })
+                    else:
+                        unallocated_pop += pop
+
+                    # Progress report
+                    if pixel_count % progress_interval == 0:
+                        pct_done = (row * width + col) / (height * width) * 100
+                        pct_allocated = (allocated_pop / total_pop * 100) if total_pop > 0 else 0
+                        print(f"    Progress: {pct_done:5.1f}% scanned | "
+                              f"{pixel_count:,} pixels | "
+                              f"{pct_allocated:.1f}% population allocated")
+
+        # Create DataFrame from facility allocations
+        facility_df = pd.DataFrame([
+            {'facility_id': fac_id, 'allocated_population': alloc_pop}
+            for fac_id, alloc_pop in facility_allocations.items()
+        ])
+
+        # Sort by allocated population
+        if len(facility_df) > 0:
+            facility_df = facility_df.sort_values('allocated_population', ascending=False).reset_index(drop=True)
+
+        # Create pixel allocations DataFrame
+        pixel_df = pd.DataFrame(pixel_allocations) if return_pixel_allocations else None
+
+        # Summary
+        print(f"\n  Probabilistic allocation complete:")
+        print(f"    Total population: {total_pop:,.0f}")
+        print(f"    Allocated population: {allocated_pop:,.0f} ({allocated_pop/total_pop*100:.1f}%)")
+        print(f"    Unallocated population: {unallocated_pop:,.0f} ({unallocated_pop/total_pop*100:.1f}%)")
+        print(f"    Pixels processed: {pixel_count:,}")
+        print(f"    Facilities receiving allocation: {len(facility_df)}")
+        if len(facility_df) > 0:
+            print(f"    Sum of facility allocations: {facility_df['allocated_population'].sum():,.0f}")
+        if pixel_df is not None:
+            print(f"    Pixel allocations tracked: {len(pixel_df):,}")
+
+        return facility_df, pixel_df
+
     def allocate_all_pixels(self, progress_interval: int = 50000) -> pd.DataFrame:
         """
         Allocate all populated pixels to facilities (OPTIMIZED VERSION)
@@ -395,6 +609,180 @@ class PatientAllocator:
         }
         return df, stats
 
+    def _process_chunk_probabilistic(self, chunk: Tuple[int, int]) -> Tuple[Dict[str, float], list, Dict[str, float]]:
+        """
+        Process a chunk of rows for probabilistic parallel allocation.
+
+        Args:
+            chunk: (start_row, end_row)
+
+        Returns:
+            (facility_allocations_dict, pixel_allocations_list, stats_dict)
+        """
+        start_row, end_row = chunk
+        facility_allocations = {}  # facility_id -> total allocated population
+        pixel_allocations = []  # List of pixel-level allocations
+        total_pop = 0
+        allocated_pop = 0
+        unallocated_pop = 0
+        pixel_count = 0
+
+        with rasterio.open(self.pop_raster_path) as src:
+            width = src.width
+            sample_rate = self.params['sample_rate']
+            window = Window(0, start_row, width, end_row - start_row)
+            pop_data = src.read(1, window=window)
+            transform = src.transform
+
+            for row in range(start_row, end_row, sample_rate):
+                row_off = row - start_row
+                if row_off >= pop_data.shape[0]:
+                    break
+                for col in range(0, width, sample_rate):
+                    pop = pop_data[row_off, col]
+                    if pop <= 0:
+                        continue
+
+                    lon, lat = transform * (col + 0.5, row + 0.5)
+
+                    total_pop += pop
+                    pixel_count += 1
+
+                    allocation = self.allocate_pixel_probabilistic(lon, lat, pop)
+                    if allocation:
+                        allocated_pop += pop
+                        for alloc in allocation['allocations']:
+                            fac_id = alloc['facility_id']
+                            if fac_id not in facility_allocations:
+                                facility_allocations[fac_id] = 0
+                            facility_allocations[fac_id] += alloc['allocated_pop']
+
+                        # Track pixel-level allocation (primary facility)
+                        primary = max(allocation['allocations'], key=lambda x: x['probability'])
+                        # Get facility_idx for compatibility with old format
+                        fac_match = self.facilities[self.facilities['HealthFacility'] == primary['facility_id']]
+                        fac_idx = fac_match.index[0] if not fac_match.empty else -1
+                        pixel_allocations.append({
+                            'lon': lon,
+                            'lat': lat,
+                            'population': pop,
+                            'facility_idx': fac_idx,
+                            'facility_id': primary['facility_id'],
+                            'probability': primary['probability'],
+                            'num_candidates': allocation['num_candidates']
+                        })
+                    else:
+                        unallocated_pop += pop
+
+        stats = {
+            'total_pop': total_pop,
+            'allocated_pop': allocated_pop,
+            'unallocated_pop': unallocated_pop,
+            'pixel_count': pixel_count,
+            'num_facilities': len(facility_allocations)
+        }
+        return facility_allocations, pixel_allocations, stats
+
+    def allocate_all_pixels_probabilistic_parallel(self, progress_interval: int = 50000,
+                                                    num_workers: Optional[int] = None,
+                                                    return_pixel_allocations: bool = True) -> Tuple[pd.DataFrame, Optional[pd.DataFrame]]:
+        """
+        Parallel probabilistic allocation using multiprocessing.
+
+        Args:
+            progress_interval: Unused in parallel mode (kept for API parity)
+            num_workers: Number of worker processes (defaults to CPU count - 1)
+            return_pixel_allocations: If True, also return pixel-level allocations
+
+        Returns:
+            Tuple of (facility_df, pixel_df):
+                - facility_df: DataFrame with columns [facility_id, allocated_population]
+                - pixel_df: DataFrame with columns [lon, lat, population, facility_id, probability, num_candidates]
+        """
+        if num_workers is None:
+            num_workers = max(cpu_count() - 1, 1)
+
+        print(f"\nAllocating population pixels to facilities (PROBABILISTIC PARALLEL)...")
+        print(f"Using {num_workers} parallel workers")
+
+        with rasterio.open(self.pop_raster_path) as src:
+            height, width = src.shape
+            sample_rate = self.params['sample_rate']
+
+        print(f"  Raster size: {height} x {width} = {height*width:,} pixels")
+        if sample_rate > 1:
+            print(f"  Sampling rate: 1/{sample_rate} (processing every {sample_rate}th pixel)")
+
+        chunk_size = math.ceil(height / num_workers)
+        chunks = [
+            (i * chunk_size, min((i + 1) * chunk_size, height))
+            for i in range(num_workers)
+            if i * chunk_size < height
+        ]
+
+        # Submit chunks as separate futures
+        with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
+            futures = [executor.submit(self._process_chunk_probabilistic, chunk) for chunk in chunks]
+
+            all_facility_allocations = {}
+            all_pixel_allocations = []
+            stats_list = []
+            total_futures = len(futures)
+            completed = 0
+
+            for fut in concurrent.futures.as_completed(futures):
+                try:
+                    chunk_facility_allocs, chunk_pixel_allocs, stats = fut.result()
+                except Exception as e:
+                    raise RuntimeError(f"Error in worker during probabilistic allocation: {e}")
+
+                # Merge chunk facility allocations into global
+                for fac_id, alloc_pop in chunk_facility_allocs.items():
+                    if fac_id not in all_facility_allocations:
+                        all_facility_allocations[fac_id] = 0
+                    all_facility_allocations[fac_id] += alloc_pop
+
+                # Collect pixel allocations
+                if return_pixel_allocations:
+                    all_pixel_allocations.extend(chunk_pixel_allocs)
+
+                stats_list.append(stats)
+
+                completed += 1
+                pct = (completed / total_futures) * 100
+                print(f"    Parallel allocation progress: {completed}/{total_futures} chunks ({pct:.0f}%)")
+
+        # Create facility DataFrame
+        facility_df = pd.DataFrame([
+            {'facility_id': fac_id, 'allocated_population': alloc_pop}
+            for fac_id, alloc_pop in all_facility_allocations.items()
+        ])
+
+        if len(facility_df) > 0:
+            facility_df = facility_df.sort_values('allocated_population', ascending=False).reset_index(drop=True)
+
+        # Create pixel DataFrame
+        pixel_df = pd.DataFrame(all_pixel_allocations) if return_pixel_allocations and all_pixel_allocations else None
+
+        total_pop = sum(s['total_pop'] for s in stats_list)
+        allocated_pop = sum(s['allocated_pop'] for s in stats_list)
+        unallocated_pop = sum(s['unallocated_pop'] for s in stats_list)
+        pixel_count = sum(s['pixel_count'] for s in stats_list)
+
+        print(f"\n  Probabilistic allocation complete:")
+        print(f"    Total population: {total_pop:,.0f}")
+        if total_pop > 0:
+            print(f"    Allocated population: {allocated_pop:,.0f} ({allocated_pop/total_pop*100:.1f}%)")
+            print(f"    Unallocated population: {unallocated_pop:,.0f} ({unallocated_pop/total_pop*100:.1f}%)")
+        print(f"    Pixels processed: {pixel_count:,}")
+        print(f"    Facilities receiving allocation: {len(facility_df)}")
+        if len(facility_df) > 0:
+            print(f"    Sum of facility allocations: {facility_df['allocated_population'].sum():,.0f}")
+        if pixel_df is not None:
+            print(f"    Pixel allocations tracked: {len(pixel_df):,}")
+
+        return facility_df, pixel_df
+
     def allocate_all_pixels_parallel(self, progress_interval: int = 50000,
                                      num_workers: Optional[int] = None) -> pd.DataFrame:
         """
@@ -428,11 +816,31 @@ class PatientAllocator:
             if i * chunk_size < height
         ]
 
+        # Submit chunks as separate futures so we can report progress as they complete
         with concurrent.futures.ProcessPoolExecutor(max_workers=num_workers) as executor:
-            results = list(executor.map(self._process_chunk, chunks))
+            futures = [executor.submit(self._process_chunk, chunk) for chunk in chunks]
 
-        alloc_dfs = [res[0] for res in results]
-        stats_list = [res[1] for res in results]
+            results = []
+            stats_list = []
+            alloc_dfs = []
+            total_futures = len(futures)
+            completed = 0
+
+            for fut in concurrent.futures.as_completed(futures):
+                try:
+                    res = fut.result()
+                except Exception as e:
+                    # If a worker fails, surface an informative error
+                    raise RuntimeError(f"Error in worker during allocation: {e}")
+
+                df_chunk, stats = res
+                alloc_dfs.append(df_chunk)
+                stats_list.append(stats)
+                results.append(res)
+
+                completed += 1
+                pct = (completed / total_futures) * 100
+                print(f"    Parallel allocation progress: {completed}/{total_futures} chunks ({pct:.0f}%)")
         df = pd.concat(alloc_dfs, ignore_index=True) if alloc_dfs else pd.DataFrame()
 
         total_pop = sum(s['total_pop'] for s in stats_list)
@@ -656,6 +1064,298 @@ class PatientAllocator:
 
         return anchor_summary
 
+    def aggregate_facilities_to_hsas(self, facility_allocations: pd.DataFrame,
+                                      hsa_anchors: gpd.GeoDataFrame,
+                                      all_facilities: gpd.GeoDataFrame,
+                                      network_type: str = "unknown",
+                                      optimization_mode: str = "unspecified",
+                                      max_assignment_distance_km: float = 100.0,
+                                      alpha: Optional[float] = None,
+                                      beta: Optional[float] = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """
+        Aggregate facility-level populations to HSAs using three-case logic.
+
+        This method handles the PROBABILISTIC allocation workflow where each pixel's
+        population is distributed across multiple facilities. It then maps each
+        facility's total allocated population to HSAs based on spatial containment.
+
+        THREE CASES for facility-to-HSA assignment:
+        1. Facility inside EXACTLY 1 HSA → 100% of population to that HSA
+        2. Facility OUTSIDE ALL HSAs → Assign to nearest HSA anchor within max distance;
+           if beyond max distance, report as excluded
+        3. Facility inside 2+ OVERLAPPING HSAs → Allocate proportionally based on
+           gravity scores to each containing HSA's anchor
+
+        Args:
+            facility_allocations: DataFrame with columns [facility_id, allocated_population]
+                                  Output from allocate_all_pixels_probabilistic()
+            hsa_anchors: GeoDataFrame with HSA anchor facilities (must have service_radius_km)
+            all_facilities: GeoDataFrame with ALL facilities (must have HealthFacility, geometry)
+            network_type: 'INF' or 'NCD'
+            optimization_mode: e.g., 'fewest', 'footprint', etc.
+            max_assignment_distance_km: Max distance for assigning facilities outside all HSAs
+            alpha: Facility size weight for gravity model (default: use self.params['alpha'])
+            beta: Distance decay for gravity model (default: use self.params['beta'])
+
+        Returns:
+            Tuple of (hsa_summary_df, facility_assignment_df):
+                - hsa_summary: DataFrame with columns [anchor_id, anchor_name, network_type,
+                              optimization_mode, allocated_patients, num_facilities_in_hsa,
+                              facilities_in_hsa]
+                - facility_assignment: DataFrame showing how each facility was assigned
+                              (includes assignment_case, assigned_hsa(s), etc.)
+        """
+        print(f"\n{'='*80}")
+        print("AGGREGATING FACILITIES TO HSAs (THREE-CASE LOGIC)")
+        print(f"{'='*80}")
+
+        # Use gravity parameters from allocator if not specified
+        if alpha is None:
+            alpha = self.params.get('alpha', 0.75)
+        if beta is None:
+            beta = self.params.get('beta', 1.5)
+
+        print(f"  Gravity model parameters: alpha={alpha}, beta={beta}")
+
+        # Ensure consistent CRS
+        if hsa_anchors.crs and hsa_anchors.crs.to_epsg() != 4326:
+            hsa_anchors = hsa_anchors.to_crs(epsg=4326)
+        if all_facilities.crs and all_facilities.crs.to_epsg() != 4326:
+            all_facilities = all_facilities.to_crs(epsg=4326)
+
+        # Helper function to get coordinates
+        def _get_coords(geom):
+            if geom is None:
+                return None
+            if geom.geom_type == "Point":
+                return (geom.x, geom.y)
+            return (geom.representative_point().x, geom.representative_point().y)
+
+        # Build HSA anchor info (including volumes for gravity model)
+        anchors = hsa_anchors[['HealthFacility', 'service_radius_km', 'geometry']].copy()
+        anchors['anchor_coords'] = anchors.geometry.apply(_get_coords)
+
+        # Get anchor volumes from hsa_anchors or all_facilities
+        if 'Total' in hsa_anchors.columns:
+            anchors['volume'] = hsa_anchors['Total'].values
+        elif 'patient_volume' in hsa_anchors.columns:
+            anchors['volume'] = hsa_anchors['patient_volume'].values
+        else:
+            # Look up volumes from all_facilities
+            anchor_volumes = []
+            for anchor_name in anchors['HealthFacility']:
+                match = all_facilities[all_facilities['HealthFacility'] == anchor_name]
+                if not match.empty and 'Total' in match.columns:
+                    anchor_volumes.append(match.iloc[0]['Total'])
+                elif not match.empty and 'volume' in match.columns:
+                    anchor_volumes.append(match.iloc[0]['volume'])
+                else:
+                    anchor_volumes.append(1000)  # Default volume
+            anchors['volume'] = anchor_volumes
+
+        # Build lists for efficient iteration
+        anchor_coords_list = [c for c in anchors['anchor_coords'].values if c is not None]
+        anchor_names_list = anchors['HealthFacility'].values.tolist()
+        anchor_radii_list = anchors['service_radius_km'].values.tolist()
+        anchor_volumes_list = anchors['volume'].values.tolist()
+
+        # Process each facility
+        facility_assignments = []
+        hsa_populations = {name: 0.0 for name in anchor_names_list}
+        hsa_facility_lists = {name: [] for name in anchor_names_list}
+
+        excluded_facilities = []
+        case_counts = {'case_1': 0, 'case_2': 0, 'case_3': 0, 'excluded': 0}
+
+        for _, fac_row in facility_allocations.iterrows():
+            fac_id = fac_row['facility_id']
+            fac_pop = fac_row['allocated_population']
+
+            # Get facility coordinates
+            fac_match = all_facilities[all_facilities['HealthFacility'] == fac_id]
+            if fac_match.empty:
+                print(f"  WARNING: Facility '{fac_id}' not found in all_facilities")
+                continue
+
+            fac_geom = fac_match.iloc[0].geometry
+            fac_coords = _get_coords(fac_geom)
+            if fac_coords is None:
+                continue
+
+            # Calculate distance to all HSA anchors
+            containing_hsas = []
+            distances_to_anchors = []
+
+            for i, (anchor_name, anchor_radius, anchor_volume) in enumerate(
+                    zip(anchor_names_list, anchor_radii_list, anchor_volumes_list)):
+                anchor_coords = anchor_coords_list[i]
+                dist_km = GeoUtils.haversine_km(
+                    fac_coords[0], fac_coords[1],
+                    anchor_coords[0], anchor_coords[1]
+                )
+                distances_to_anchors.append((anchor_name, dist_km, anchor_radius, anchor_volume))
+
+                # Check if facility is within this HSA's service radius
+                if dist_km <= anchor_radius:
+                    containing_hsas.append((anchor_name, dist_km, anchor_radius, anchor_volume))
+
+            # Determine assignment case
+            if len(containing_hsas) == 1:
+                # CASE 1: Inside exactly ONE HSA
+                case_counts['case_1'] += 1
+                anchor_name = containing_hsas[0][0]
+                hsa_populations[anchor_name] += fac_pop
+                hsa_facility_lists[anchor_name].append(fac_id)
+
+                facility_assignments.append({
+                    'facility_id': fac_id,
+                    'allocated_population': fac_pop,
+                    'assignment_case': 'Case 1: Inside 1 HSA',
+                    'primary_hsa': anchor_name,
+                    'distance_to_primary_km': containing_hsas[0][1],
+                    'num_containing_hsas': 1,
+                    'all_containing_hsas': anchor_name,
+                    'excluded': False
+                })
+
+            elif len(containing_hsas) == 0:
+                # CASE 2: Outside ALL HSAs - find nearest anchor within max distance
+                distances_to_anchors.sort(key=lambda x: x[1])
+                nearest = distances_to_anchors[0]
+                nearest_name, nearest_dist, _, _ = nearest
+
+                if nearest_dist <= max_assignment_distance_km:
+                    case_counts['case_2'] += 1
+                    hsa_populations[nearest_name] += fac_pop
+                    hsa_facility_lists[nearest_name].append(fac_id)
+
+                    facility_assignments.append({
+                        'facility_id': fac_id,
+                        'allocated_population': fac_pop,
+                        'assignment_case': 'Case 2: Outside all HSAs (nearest)',
+                        'primary_hsa': nearest_name,
+                        'distance_to_primary_km': nearest_dist,
+                        'num_containing_hsas': 0,
+                        'all_containing_hsas': '',
+                        'excluded': False
+                    })
+                else:
+                    # Excluded - beyond max distance
+                    case_counts['excluded'] += 1
+                    excluded_facilities.append({
+                        'facility_id': fac_id,
+                        'allocated_population': fac_pop,
+                        'nearest_anchor': nearest_name,
+                        'distance_km': nearest_dist
+                    })
+
+                    facility_assignments.append({
+                        'facility_id': fac_id,
+                        'allocated_population': fac_pop,
+                        'assignment_case': 'EXCLUDED: Beyond max distance',
+                        'primary_hsa': None,
+                        'distance_to_primary_km': nearest_dist,
+                        'num_containing_hsas': 0,
+                        'all_containing_hsas': '',
+                        'excluded': True
+                    })
+
+            else:
+                # CASE 3: Inside 2+ OVERLAPPING HSAs - proportional allocation using gravity model
+                case_counts['case_3'] += 1
+
+                # Calculate gravity-based weights for each containing HSA
+                # Using full gravity model: weight = volume^α / distance^β
+                weights = []
+                for anchor_name, dist_km, _, anchor_volume in containing_hsas:
+                    # Avoid division by zero
+                    dist_km = max(dist_km, 0.01)
+                    # Gravity model: volume^α / distance^β
+                    weight = (anchor_volume ** alpha) / (dist_km ** beta)
+                    weights.append((anchor_name, weight, dist_km))
+
+                total_weight = sum(w[1] for w in weights)
+
+                # Allocate proportionally
+                hsa_allocations = []
+                for anchor_name, weight, dist_km in weights:
+                    proportion = weight / total_weight
+                    pop_share = fac_pop * proportion
+                    hsa_populations[anchor_name] += pop_share
+                    hsa_allocations.append(f"{anchor_name}:{proportion:.1%}")
+
+                # For facility list, assign to closest containing HSA
+                closest_containing = min(containing_hsas, key=lambda x: x[1])
+                hsa_facility_lists[closest_containing[0]].append(fac_id)
+
+                facility_assignments.append({
+                    'facility_id': fac_id,
+                    'allocated_population': fac_pop,
+                    'assignment_case': 'Case 3: Inside 2+ HSAs (proportional)',
+                    'primary_hsa': closest_containing[0],
+                    'distance_to_primary_km': closest_containing[1],
+                    'num_containing_hsas': len(containing_hsas),
+                    'all_containing_hsas': '; '.join(hsa_allocations),
+                    'excluded': False
+                })
+
+        # Print summary
+        print(f"\nFacility Assignment Summary:")
+        print(f"  Case 1 (Inside 1 HSA):           {case_counts['case_1']:4d} facilities")
+        print(f"  Case 2 (Outside, assigned):      {case_counts['case_2']:4d} facilities")
+        print(f"  Case 3 (Overlapping, proportional): {case_counts['case_3']:4d} facilities")
+        print(f"  EXCLUDED (beyond max distance):  {case_counts['excluded']:4d} facilities")
+        print(f"  Total:                           {sum(case_counts.values()):4d} facilities")
+
+        if excluded_facilities:
+            print(f"\nExcluded Facilities (beyond {max_assignment_distance_km}km):")
+            excluded_pop_total = sum(f['allocated_population'] for f in excluded_facilities)
+            print(f"  Count: {len(excluded_facilities)}")
+            print(f"  Total excluded population: {excluded_pop_total:,.0f}")
+            for ef in excluded_facilities[:5]:  # Show first 5
+                print(f"    - {ef['facility_id']}: {ef['allocated_population']:,.0f} people "
+                      f"(nearest: {ef['nearest_anchor']}, {ef['distance_km']:.1f}km)")
+            if len(excluded_facilities) > 5:
+                print(f"    ... and {len(excluded_facilities) - 5} more")
+
+        # Build HSA summary DataFrame
+        hsa_results = []
+        for anchor_name in anchor_names_list:
+            fac_list = hsa_facility_lists[anchor_name]
+            hsa_results.append({
+                'anchor_name': anchor_name,
+                'allocated_patients': hsa_populations[anchor_name],
+                'num_facilities_in_hsa': len(fac_list),
+                'facilities_in_hsa': ', '.join(fac_list[:5]) + ('...' if len(fac_list) > 5 else '')
+            })
+
+        hsa_summary = pd.DataFrame(hsa_results)
+        hsa_summary['network_type'] = network_type
+        hsa_summary['optimization_mode'] = optimization_mode
+        hsa_summary = hsa_summary.sort_values('allocated_patients', ascending=False).reset_index(drop=True)
+        hsa_summary['anchor_id'] = range(1, len(hsa_summary) + 1)
+
+        # Reorder columns
+        hsa_summary = hsa_summary[['anchor_id', 'anchor_name', 'network_type',
+                                   'optimization_mode', 'allocated_patients',
+                                   'num_facilities_in_hsa', 'facilities_in_hsa']]
+
+        facility_assignment_df = pd.DataFrame(facility_assignments)
+
+        # Print HSA summary
+        print(f"\nHSA Population Summary:")
+        print(f"{'HSA Anchor':<45} {'Population':>15} {'Facilities':>12}")
+        print("-" * 75)
+        for _, row in hsa_summary.iterrows():
+            print(f"  {row['anchor_name']:<43} {row['allocated_patients']:>15,.0f} {row['num_facilities_in_hsa']:>12d}")
+        print("-" * 75)
+        print(f"  {'TOTAL':<43} {hsa_summary['allocated_patients'].sum():>15,.0f} "
+              f"{hsa_summary['num_facilities_in_hsa'].sum():>12d}")
+
+        print(f"\n{'='*80}")
+
+        return hsa_summary, facility_assignment_df
+
 
 def allocate_patients_for_hsa_mode(hsa_geojson_path: str,
                                    pop_raster_path: str,
@@ -729,4 +1429,136 @@ def allocate_patients_for_hsa_mode(hsa_geojson_path: str,
         'hsa_summary': hsa_summary,
         'facility_summary': facility_summary,
         'allocations': allocations
+    }
+
+
+def allocate_patients_probabilistic(hsa_geojson_path: str,
+                                     all_facilities_path: str,
+                                     pop_raster_path: str,
+                                     network_type: str,
+                                     optimization_mode: str,
+                                     output_dir: Path,
+                                     params: Optional[Dict] = None,
+                                     use_parallel: bool = True) -> Dict[str, pd.DataFrame]:
+    """
+    Two-step probabilistic patient allocation workflow.
+
+    STEP 1: Allocate each population pixel to ALL 188 facilities using probabilistic
+            gravity model (population split based on attractiveness probabilities)
+
+    STEP 2: Aggregate facility populations to HSAs using three-case logic:
+            - Case 1: Facility inside exactly 1 HSA → 100% to that HSA
+            - Case 2: Facility outside all HSAs → assign to nearest anchor within 100km
+            - Case 3: Facility inside 2+ HSAs → proportional allocation by gravity
+
+    Args:
+        hsa_geojson_path: Path to HSA GeoJSON file (e.g., INF_footprint_hsas_v2.geojson)
+        all_facilities_path: Path to ALL facilities GeoPackage/CSV
+        pop_raster_path: Path to population raster
+        network_type: 'INF' or 'NCD'
+        optimization_mode: e.g., 'fewest', 'footprint', etc.
+        output_dir: Directory for output files
+        params: Optional allocation parameters (alpha, beta, max_distance_km, sample_rate)
+        use_parallel: Whether to use parallel processing (default True)
+
+    Returns:
+        Dict with keys:
+            - 'hsa_summary': HSA-level population totals
+            - 'facility_allocations': Facility-level population totals from pixels
+            - 'facility_assignments': How each facility was assigned to HSAs
+    """
+    print("="*80)
+    print(f"PROBABILISTIC PATIENT ALLOCATION: {network_type} - {optimization_mode.upper()}")
+    print("="*80)
+    print("\nThis workflow uses TWO-STEP allocation:")
+    print("  Step 1: Probabilistic pixel → ALL facilities (gravity model)")
+    print("  Step 2: Facility → HSA aggregation (three-case logic)")
+
+    # Load HSA anchors
+    hsa_anchors = gpd.read_file(hsa_geojson_path)
+    print(f"\nLoaded {len(hsa_anchors)} HSA anchor facilities")
+
+    # Load ALL facilities
+    all_facilities_path = Path(all_facilities_path)
+    if all_facilities_path.suffix == '.gpkg':
+        all_facilities = gpd.read_file(all_facilities_path)
+    else:
+        all_fac_df = pd.read_csv(all_facilities_path)
+        all_facilities = gpd.GeoDataFrame(
+            all_fac_df,
+            geometry=gpd.points_from_xy(all_fac_df['lon'], all_fac_df['lat']),
+            crs='EPSG:4326'
+        )
+
+    print(f"Loaded {len(all_facilities)} total facilities for allocation")
+
+    # Initialize allocator with ALL facilities
+    allocator = PatientAllocator(pop_raster_path, all_facilities, params)
+
+    # STEP 1: Probabilistic allocation to ALL facilities
+    print("\n" + "-"*40)
+    print("STEP 1: Probabilistic pixel allocation")
+    print("-"*40)
+
+    if use_parallel:
+        facility_allocations, pixel_allocations = allocator.allocate_all_pixels_probabilistic_parallel()
+    else:
+        facility_allocations, pixel_allocations = allocator.allocate_all_pixels_probabilistic()
+
+    # STEP 2: Aggregate facilities to HSAs
+    print("\n" + "-"*40)
+    print("STEP 2: Facility → HSA aggregation")
+    print("-"*40)
+
+    hsa_summary, facility_assignments = allocator.aggregate_facilities_to_hsas(
+        facility_allocations,
+        hsa_anchors,
+        all_facilities,
+        network_type=network_type,
+        optimization_mode=optimization_mode,
+        max_assignment_distance_km=params.get('max_distance_km', 100.0) if params else 100.0,
+        alpha=params.get('alpha', 0.75) if params else 0.75,
+        beta=params.get('beta', 1.5) if params else 1.5
+    )
+
+    # Save outputs
+    output_dir = Path(output_dir)
+    output_dir.mkdir(exist_ok=True)
+
+    # 1. HSA modeling dataset (PRIMARY OUTPUT)
+    hsa_output = output_dir / f'{network_type}_{optimization_mode}_hsa_populations_probabilistic.csv'
+    hsa_summary.to_csv(hsa_output, index=False)
+    print(f"\n  Saved HSA population summary: {hsa_output.name}")
+
+    # 2. Facility-level allocations from pixels
+    fac_alloc_output = output_dir / f'{network_type}_{optimization_mode}_facility_allocations_probabilistic.csv'
+    facility_allocations.to_csv(fac_alloc_output, index=False)
+    print(f"  Saved facility allocations: {fac_alloc_output.name}")
+
+    # 3. Facility assignment details (shows three-case logic)
+    fac_assign_output = output_dir / f'{network_type}_{optimization_mode}_facility_hsa_assignments.csv'
+    facility_assignments.to_csv(fac_assign_output, index=False)
+    print(f"  Saved facility-to-HSA assignments: {fac_assign_output.name}")
+
+    # 4. Pixel-level allocations (for downstream compatibility)
+    if pixel_allocations is not None:
+        # Save with both naming conventions for compatibility
+        pixel_output = output_dir / f'pixel_allocations_{network_type}_{optimization_mode}.csv'
+        pixel_allocations.to_csv(pixel_output, index=False)
+        print(f"  Saved pixel allocations: {pixel_output.name}")
+
+        # Also save as allocation_details.csv (expected by downstream scripts)
+        details_output = output_dir / f'{network_type}_{optimization_mode}_allocation_details.csv'
+        pixel_allocations.to_csv(details_output, index=False)
+        print(f"  Saved allocation details: {details_output.name}")
+
+    print("\n" + "="*80)
+    print("PROBABILISTIC ALLOCATION COMPLETE")
+    print("="*80)
+
+    return {
+        'hsa_summary': hsa_summary,
+        'facility_allocations': facility_allocations,
+        'facility_assignments': facility_assignments,
+        'pixel_allocations': pixel_allocations
     }

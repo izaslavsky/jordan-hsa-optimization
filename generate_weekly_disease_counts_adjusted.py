@@ -90,18 +90,28 @@ from pathlib import Path
 
 # Step 2: Load gravity model allocation details
 print("\n[2/7] Loading gravity model allocations...")
+# Try both naming conventions (old and new/probabilistic)
 alloc_path = Path(f'out/{NETWORK}_{HSA_MODE}_allocation_details.csv')
-if not alloc_path.exists():
+alloc_path_alt = Path(f'out/pixel_allocations_{NETWORK}_{HSA_MODE}.csv')
+
+if alloc_path.exists():
+    print(f"  Using: {alloc_path}")
+elif alloc_path_alt.exists():
+    alloc_path = alloc_path_alt
+    print(f"  Using: {alloc_path}")
+else:
     raise FileNotFoundError(
-        f"Missing allocation details: {alloc_path}.\n"
+        f"Missing allocation details. Tried:\n"
+        f"  - {alloc_path}\n"
+        f"  - {alloc_path_alt}\n"
         "Run patient allocation for this network/mode to generate it "
-        "(e.g., patient_allocation.py or the allocation notebook), "
+        "(e.g., Patient_Allocation_Probabilistic.ipynb or the old allocation notebook), "
         "or use generate_weekly_disease_counts.py for unadjusted counts."
     )
 alloc_details = pd.read_csv(alloc_path)
 print(f"  Loaded {len(alloc_details):,} population pixels with facility assignments")
 
-# Map facility_idx to facility names
+# Map facility to names
 # Use FACILITY_DATA env var if set, otherwise try non-synthetic file first
 fac_file = os.environ.get('FACILITY_DATA')
 if not fac_file:
@@ -112,9 +122,19 @@ print(f"  Using facilities: {fac_file}")
 facilities_df = pd.read_csv(fac_file, encoding='utf-8-sig')
 facilities_df['healthfacility'] = facilities_df['healthfacility'].str.replace('\xa0', ' ').str.replace(r'\s+', ' ', regex=True).str.strip()
 
-# Create facility index mapping
-facility_idx_to_name = dict(enumerate(facilities_df['healthfacility']))
-alloc_details['facility_name'] = alloc_details['facility_idx'].map(facility_idx_to_name)
+# Handle both old format (facility_idx) and new format (facility_id only)
+if 'facility_idx' in alloc_details.columns:
+    # Old format: use facility_idx to map to names
+    facility_idx_to_name = dict(enumerate(facilities_df['healthfacility']))
+    alloc_details['facility_name'] = alloc_details['facility_idx'].map(facility_idx_to_name)
+elif 'facility_id' in alloc_details.columns:
+    # New format: facility_id already contains the name
+    alloc_details['facility_name'] = alloc_details['facility_id'].str.replace('\xa0', ' ').str.replace(r'\s+', ' ', regex=True).str.strip()
+    # Create facility_idx from facility_id for compatibility
+    name_to_idx = {name: idx for idx, name in enumerate(facilities_df['healthfacility'])}
+    alloc_details['facility_idx'] = alloc_details['facility_name'].map(name_to_idx)
+else:
+    raise ValueError("Allocation file must have either 'facility_idx' or 'facility_id' column")
 
 # For each facility, calculate its probability of serving each HSA
 print("\n[3/7] Calculating facility-to-HSA probabilities...")

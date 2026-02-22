@@ -15,7 +15,7 @@ Logic:
 Usage:
     python generate_diagnosis_counts_v2.py
 
-Author: HSA Research Team
+Author: Claude Code
 Date: 2025-12-07
 """
 
@@ -301,7 +301,8 @@ def deduplicate_diagnoses(patient_df: pd.DataFrame) -> pd.DataFrame:
 def create_diagnosis_tables(
     patient_df: pd.DataFrame,
     auth_df: pd.DataFrame,
-    network: str
+    network: str,
+    hsa_mode: str
 ) -> tuple:
     """Create diagnosis count tables."""
     print(f"\nCreating diagnosis count tables...")
@@ -332,7 +333,7 @@ def create_diagnosis_tables(
     total_counts = total_counts.sort_values('total_diagnoses', ascending=False)
 
     # Save
-    total_file = OUT_DIR / f'{network}_diagnosis_counts_total.csv'
+    total_file = OUT_DIR / f'{network}_{hsa_mode}_diagnosis_counts_total.csv'
     total_counts.to_csv(total_file, index=False)
     print(f"  [OK] Saved: {total_file.name} ({len(total_counts)} facilities)")
 
@@ -351,7 +352,7 @@ def create_diagnosis_tables(
     group_counts = group_counts.sort_values(['healthfacility', 'diagnosis_count'], ascending=[True, False])
 
     # Save
-    group_file = OUT_DIR / f'{network}_diagnosis_counts_by_group.csv'
+    group_file = OUT_DIR / f'{network}_{hsa_mode}_diagnosis_counts_by_group.csv'
     group_counts.to_csv(group_file, index=False)
     print(f"  [OK] Saved: {group_file.name} ({len(group_counts)} rows)")
 
@@ -382,7 +383,7 @@ def create_diagnosis_tables(
     pivot = pivot.sort_values('total_diagnoses', ascending=False)
 
     # Save
-    pivot_file = OUT_DIR / f'{network}_diagnosis_counts_pivot.csv'
+    pivot_file = OUT_DIR / f'{network}_{hsa_mode}_diagnosis_counts_pivot.csv'
     pivot.to_csv(pivot_file, index=False)
     print(f"  [OK] Saved: {pivot_file.name} ({len(pivot)} facilities)")
 
@@ -443,6 +444,7 @@ def main():
     """Main execution function."""
     parser = argparse.ArgumentParser(description="Generate diagnosis counts from authoritative facilities (v2)")
     parser.add_argument("--networks", default="INF,NCD")
+    parser.add_argument("--hsa-mode", default="footprint")
     args = parser.parse_args()
     networks = [n.strip().upper() for n in args.networks.split(',') if n.strip()]
 
@@ -468,7 +470,7 @@ def main():
             patients = assign_diagnosis_groups(patients, diag_map)
             patients = deduplicate_diagnoses(patients)
 
-            total, by_group, pivot = create_diagnosis_tables(patients, auth, network)
+            total, by_group, pivot = create_diagnosis_tables(patients, auth, network, args.hsa_mode)
             totals[network] = total
             discrepancies_by_network[network] = discrepancies
 
@@ -479,7 +481,8 @@ def main():
 
         report = generate_discrepancy_report(discrepancies_by_network)
 
-        report_file = OUT_DIR / 'patient_data_discrepancies.txt'
+        report_prefix = f"{'_'.join(networks)}_{args.hsa_mode}"
+        report_file = OUT_DIR / f'{report_prefix}_patient_data_discrepancies.txt'
         with open(report_file, 'w', encoding='utf-8') as f:
             f.write(report)
 
@@ -498,10 +501,10 @@ def main():
 
         print(f"\nOutput files:")
         for network in networks:
-            print(f"  - {network}_diagnosis_counts_total.csv")
-            print(f"  - {network}_diagnosis_counts_by_group.csv")
-            print(f"  - {network}_diagnosis_counts_pivot.csv")
-        print("  - patient_data_discrepancies.txt")
+            print(f"  - {network}_{args.hsa_mode}_diagnosis_counts_total.csv")
+            print(f"  - {network}_{args.hsa_mode}_diagnosis_counts_by_group.csv")
+            print(f"  - {network}_{args.hsa_mode}_diagnosis_counts_pivot.csv")
+        print(f"  - {report_prefix}_patient_data_discrepancies.txt")
 
         return 0
 

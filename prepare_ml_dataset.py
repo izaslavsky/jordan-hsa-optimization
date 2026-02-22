@@ -27,7 +27,7 @@ Input:
 
 Output:
     - {NETWORK}_{HSA_MODE}_modeling_dataset.csv: Complete merged dataset (may contain NaNs)
-    - modeling_dataset_metadata.json: Feature descriptions and summary
+    - {NETWORK}_{HSA_MODE}_modeling_dataset_metadata.json: Feature descriptions and summary
 
 Author: ML Modeling Team
 Date: 2025-01-13
@@ -724,7 +724,7 @@ def main():
     # -------------------------------------------------------------------------
     print("\n[STEP 10] Creating metadata...")
 
-    metadata_path = OUTPUT_DIR / "modeling_dataset_metadata.json"
+    metadata_path = OUTPUT_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_metadata.json"
     metadata = create_metadata(final_df, selected_features, metadata_path)
 
     # -------------------------------------------------------------------------
