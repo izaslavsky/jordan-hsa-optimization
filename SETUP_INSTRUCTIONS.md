@@ -232,7 +232,7 @@ All necessary data files are included in the `data/` directory:
   - Source: WorldPop (www.worldpop.org)
 - `data/jor_ppp_2020_constrained.tif` - WorldPop 2020 population density (constrained to settlement patterns, ~7M total)
   - Resolution: 100m × 100m
-  - Alternative population dataset, used as a background population density layer for mapping
+  - Used to clip HSA circles to inhabited areas only (assigns population exclusively to detected building footprint cells; desert cells carry NoData); also used as a background layer in maps
   - Source: WorldPop (www.worldpop.org)
 
 ### Administrative Boundaries
@@ -386,9 +386,9 @@ After successful setup:
 
 If you encounter issues not covered here:
 - **Check documentation**: Read notebook markdown cells for parameter descriptions
-- **GitHub Issues**: [Open an issue](https://github.com/izaslavsky/HSA_algo_public/issues)
+- **GitHub Issues**: [Open an issue](https://github.com/izaslavsky/jordan-hsa-optimization/issues)
 - **Email**: [Contact information]
 
 ---
 
-**Last Updated**: December 2025
+**Last Updated**: March 2026

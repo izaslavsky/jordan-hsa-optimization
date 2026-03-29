@@ -68,7 +68,7 @@ Columns in patient visits: `patientid`, `gender`, `ageatdiagnosis`, `governorate
 **Local GEE notebook**: Included in this repo and runnable without Colab, but requires Earth Engine authentication and (optionally) Google Drive OAuth if you use automated export/download.
 
 **Inputs**:
-- ✅ `data/INF_facility_coordinates.csv` (18 facilities with lat/lon)
+- ✅ `data/SYNINF_facility_coordinates.csv` (facility locations with lat/lon)
 - GEE datasets: CHIRPS (precipitation), ERA5-Land (temperature), TerraClimate (water balance), SRTM (elevation)
 
 **Process**:
@@ -79,7 +79,7 @@ Columns in patient visits: `patientid`, `gender`, `ageatdiagnosis`, `governorate
 5. Export facility-level climate summaries with cluster assignments
 
 **Outputs**:
-- `INF_Hospitals_Climate_Features_with_clusters.csv` (18 rows, 1 per facility)
+- `{NETWORK}_Facilities_Climate_Features_with_clusters.csv` (1 row per facility)
   - Columns: `FacilityName`, `lat`, `lon`, `P_mean_mm`, `T_mean_C`, `DTR_C`, `PET_mm`, `VPD_kPa`, `elevation_m`, `climate_k`, [other climate features]
 
 **Command**:
@@ -117,16 +117,15 @@ Upload to Google Colab and run GEE_Climate_Features_by_Facilities.ipynb
 6. Post-processing: Remove HSAs with >80% overlap
 7. Export HSA boundaries as GeoJSON with circular geometries
 
-**Outputs** (5 files, one per mode):
-- `out/INF_fewest_hsas_v2.geojson` (90% coverage)
-- `out/INF_footprint_hsas_v2.geojson` (maximized climate diversity)
-- `out/INF_distance_hsas_v2.geojson` (minimized distance)
-- `out/INF_governorate_tau_coverage_hsas_v2.geojson` (90% per governorate)
-- `out/INF_governorate_fewest_hsas_v2.geojson` (at least one per governorate)
+**Outputs** (per mode, two GeoJSON files + one GeoPackage):
+- `out/{NETWORK}_{MODE}_hsas_circles.geojson` — service-radius circles clipped to Jordan boundary
+  - Columns: `healthfacility`, `geometry` (circle polygon), `radius_km`, `circle_area_km2`, `total_patients`, `composite_score`, `climate_k`
+- `out/{NETWORK}_{MODE}_hsas_v2.geojson` — circles further clipped to WorldPop constrained inhabited cells
+  - Same columns plus `inhabited_area_km2` and `circle_geometry_wkt` (original circle preserved)
+  - Used for GEE climate extraction, population allocation, and map display
+- `out/{NETWORK}_{MODE}_map.gpkg` — GeoPackage with 5 layers: `hsa_circles`, `hsa_boundaries`, `hsa_anchors`, `all_facilities`, `country_boundary`
 
-Each GeoJSON contains:
-  - Columns: `healthfacility` (anchor name), `geometry` (circular polygon), `radius_km`, `total_patients`, `composite_score`, `climate_k`
-  - **Note**: HSAs are overlapping circles - population allocation (Step 3) is required to prevent double-counting
+**Note**: HSAs are overlapping service areas — population allocation (Step 3) is required to prevent double-counting in disease rate calculations
 
 **Command**:
 ```
@@ -444,7 +443,9 @@ STEP 6 (ML modeling - future work) → RESULTS
 | `SYNINF_facility_coordinates.csv` | Input | Data | ~13 KB | ✅ Yes | N/A (provided) |
 | `jor_ppp_2020_UNadj.tif` | Input | Data | ~40 MB | ✅ Yes | N/A (provided) |
 | `{NETWORK}_Facilities_Climate_Features_with_clusters.csv` | 1 | Output | ~10 KB | ⚠️ No | Run GEE notebook |
+| `{NETWORK}_{MODE}_hsas_circles.geojson` | 2 | Output | ~15 KB | ⚠️ No | Run `HSA_v6_FINAL.ipynb` |
 | `{NETWORK}_{MODE}_hsas_v2.geojson` | 2 | Output | ~20 KB | ⚠️ No | Run `HSA_v6_FINAL.ipynb` |
+| `{NETWORK}_{MODE}_map.gpkg` | 2 | Output | ~200 KB | ⚠️ No | Run `HSA_v6_FINAL.ipynb` |
 | `pixel_allocations_{NETWORK}_{MODE}.csv` | 3 | Output | ~7 MB | ⚠️ No | Run `Patient_Allocation_Probabilistic.ipynb` |
 | `{NETWORK}_{MODE}_hsa_populations_probabilistic.csv` | 3 | Output | ~5 KB | ⚠️ No | Run `Patient_Allocation_Probabilistic.ipynb` |
 | `{NETWORK}_{MODE}_facility_hsa_assignments.csv` | 3 | Output | ~20 KB | ⚠️ No | Run `Patient_Allocation_Probabilistic.ipynb` |
@@ -456,7 +457,7 @@ STEP 6 (ML modeling - future work) → RESULTS
 ---
 
 **Document Status**: Complete and Updated with Population Allocation Workflow
-**Last Updated**: 2026-01-25
+**Last Updated**: 2026-03-29
 **Next Action**:
 1. Run GEE climate extraction notebook (Step 1)
 2. Run `HSA_v6_FINAL.ipynb` for HSA delineation (includes diagnosis counts)

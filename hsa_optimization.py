@@ -2916,6 +2916,186 @@ print("clip_hsas_to_country function defined")
 
 
 
+def clip_hsas_to_population(hsas_gdf, pop_raster_path, min_pop=0.0, coarsen=4,
+                            smooth=True, smooth_m=None, min_patch_km2=0.5):
+    """
+    Clip HSA polygons to WorldPop cells with non-zero population.
+
+    For each circular HSA, retains only the portions of the service area that
+    contain at least one inhabited WorldPop cell (population > min_pop). This
+    removes uninhabited desert areas from the service area geometry, improving
+    both visual realism and the accuracy of GEE climate extractions.
+
+    Smoothing (enabled by default) applies a morphological closing operation
+    (buffer out then back in) to fill pixel-scale gaps and remove the staircase
+    effect from pixel boundaries, followed by Douglas-Peucker simplification.
+    All smoothing is performed in a metric CRS (UTM 37N) so distances are exact.
+
+    Args:
+        hsas_gdf:        GeoDataFrame with HSA polygons (any CRS).
+        pop_raster_path: Path to WorldPop GeoTIFF raster.
+        min_pop:         Minimum population threshold to include (default 0).
+        coarsen:         Integer factor to downsample the raster before
+                         vectorising (default 4 → ~400 m for 100 m source).
+                         Higher values are faster but less precise.
+        smooth:          Whether to smooth jagged pixel boundaries (default True).
+        smooth_m:        Smoothing scale in metres. Defaults to 0.8× the
+                         effective pixel size (coarsen × source resolution).
+                         Increase for smoother but less detailed boundaries.
+        min_patch_km2:   Minimum area (km²) for a connected populated patch to
+                         be retained. Isolated small patches — single buildings,
+                         Bedouin tents, tourist facilities scattered in desert —
+                         are dropped; only meaningful population clusters survive.
+                         Default 0.5 km² ≈ a small village cluster.
+
+    Returns:
+        GeoDataFrame with the same CRS as the input, geometries clipped to
+        populated areas.  A 'circle_geometry_wkt' column is added to preserve
+        the original circular geometry for reference.
+    """
+    import rasterio
+    from rasterio.mask import mask as raster_mask
+    from rasterio.features import shapes as raster_shapes
+    from rasterio.transform import Affine
+    from shapely.geometry import shape
+    from shapely.ops import unary_union
+    import numpy as np
+
+    # UTM 37N — metric CRS appropriate for Jordan; used for smoothing
+    METRIC_CRS = 'EPSG:32637'
+
+    original_crs = hsas_gdf.crs
+
+    # Store original circle geometries as WKT for reference
+    result = hsas_gdf.copy()
+    result['circle_geometry_wkt'] = hsas_gdf.geometry.to_crs('EPSG:4326').apply(lambda g: g.wkt)
+
+    with rasterio.open(pop_raster_path) as src:
+        raster_crs = src.crs
+
+        # Reproject HSAs to raster CRS (typically WGS84) for masking
+        hsas_rc = hsas_gdf.to_crs(raster_crs)
+
+        clipped_geoms_rc = []
+
+        for idx, row in hsas_rc.iterrows():
+            facility_name = row.get('HealthFacility', str(idx))
+            try:
+                geom_list = [row.geometry.__geo_interface__]
+                out_image, out_transform = raster_mask(
+                    src, geom_list, crop=True, nodata=0, filled=True
+                )
+                pop_array = out_image[0].astype(np.float32)
+
+                # Optionally coarsen to speed up vectorisation
+                coarsen_here = 1  # actual factor used (may differ from coarsen if array is tiny)
+                if coarsen > 1:
+                    h, w = pop_array.shape
+                    h2, w2 = h // coarsen, w // coarsen
+                    if h2 > 0 and w2 > 0:
+                        pop_array = pop_array[:h2 * coarsen, :w2 * coarsen] \
+                                        .reshape(h2, coarsen, w2, coarsen) \
+                                        .max(axis=(1, 3))
+                        coarsen_here = coarsen
+                        # Adjust transform for coarsened array
+                        t = out_transform
+                        out_transform = Affine(
+                            t.a * coarsen_here, t.b, t.c,
+                            t.d, t.e * coarsen_here, t.f
+                        )
+
+                binary = (pop_array > min_pop).astype(np.uint8)
+
+                if binary.sum() == 0:
+                    raise ValueError(
+                        f"No populated WorldPop cells found within HSA for '{facility_name}'. "
+                        f"This should never happen for an optimizer-selected facility. "
+                        f"Check that pop_raster_path covers Jordan and CRS is correct."
+                    )
+
+                # Vectorise populated pixels into shapely polygons
+                pixel_polys = [
+                    shape(geom_dict)
+                    for geom_dict, val in raster_shapes(binary, transform=out_transform)
+                    if int(val) == 1
+                ]
+
+                populated_area = unary_union(pixel_polys)
+
+                # Drop isolated small patches (single buildings, desert outposts)
+                # that would otherwise prevent desert carve-outs after smoothing.
+                # Work in metric CRS so area threshold is in km².
+                if min_patch_km2 > 0:
+                    min_patch_m2 = min_patch_km2 * 1e6
+                    parts = gpd.GeoSeries(
+                        list(populated_area.geoms)
+                        if populated_area.geom_type == 'MultiPolygon'
+                        else [populated_area],
+                        crs=raster_crs
+                    ).to_crs(METRIC_CRS)
+                    large_parts = parts[parts.area >= min_patch_m2]
+                    if large_parts.empty:
+                        # All patches are tiny — keep the largest one rather than failing
+                        large_parts = parts[[parts.area.idxmax()]]
+                    populated_area = unary_union(
+                        large_parts.to_crs(raster_crs).values
+                    )
+
+                # Intersect with the original circle (pixel edges may overshoot)
+                clipped = row.geometry.intersection(populated_area)
+
+                if clipped.is_empty:
+                    raise ValueError(
+                        f"Intersection of populated pixels with HSA circle is empty for '{facility_name}'. "
+                        f"Check for CRS mismatch between HSA polygons and population raster."
+                    )
+
+                n_pixels = binary.sum()
+
+                if smooth:
+                    # Determine smoothing scale: default to 0.8× effective pixel size
+                    # src.res[0] is in degrees (WGS84); 111_320 m/degree at equator,
+                    # adjusted for Jordan's latitude (~31°N, cos≈0.857).
+                    if smooth_m is None:
+                        pixel_deg = abs(src.res[0]) * coarsen_here
+                        pixel_m = pixel_deg * 111_320 * 0.857
+                        _smooth_m = pixel_m * 0.8
+                    else:
+                        _smooth_m = smooth_m
+
+                    # Work in metric CRS so buffer distances are exact
+                    g_metric = gpd.GeoSeries([clipped], crs=raster_crs) \
+                                  .to_crs(METRIC_CRS).iloc[0]
+
+                    # Morphological closing: fills pixel-scale gaps and rounds corners
+                    g_metric = g_metric.buffer(_smooth_m).buffer(-_smooth_m)
+
+                    # Douglas-Peucker simplification: removes staircase micro-vertices
+                    g_metric = g_metric.simplify(_smooth_m * 0.5,
+                                                 preserve_topology=True)
+
+                    clipped = gpd.GeoSeries([g_metric], crs=METRIC_CRS) \
+                                 .to_crs(raster_crs).iloc[0]
+
+                print(f"  [pop-clip] {facility_name}: {n_pixels} populated cells"
+                      + (" (smoothed)" if smooth else ""))
+                clipped_geoms_rc.append(clipped)
+
+            except Exception as e:
+                raise RuntimeError(f"clip_hsas_to_population failed for '{facility_name}': {e}") from e
+
+        # Rebuild GeoDataFrame in raster CRS, then reproject back to original CRS
+        clipped_rc = hsas_rc.copy()
+        clipped_rc['geometry'] = clipped_geoms_rc
+        result['geometry'] = clipped_rc.to_crs(original_crs).geometry.values
+
+    return result
+
+
+print("clip_hsas_to_population function defined")
+
+
+
 def assign_adaptive_radii(facilities_gdf, base_urban_km=None, base_rural_km=None):
 
     """

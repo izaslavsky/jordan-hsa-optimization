@@ -102,9 +102,17 @@ def compute_overlap_metrics(geometries, pop_arr, transform, pop_raster_path):
     return unique_pop, total_counted, overlap_pop, multiplier
 
 def compute_shape_metrics(geometries):
-    """Compute shape metrics for polygons."""
+    """Compute shape metrics for polygons or MultiPolygons.
+
+    For MultiPolygons (population-clipped HSAs), compactness is computed on
+    the convex hull of the union — this measures geographic spread of the
+    inhabited patches rather than the jagged perimeter of many disconnected
+    polygons, which would give a meaningless near-zero compactness value.
+    The actual populated area (sum of patch areas) is reported separately.
+    """
     compactness_values = []
     areas_km2 = []
+    n_patches_list = []
 
     for geom in geometries:
         if geom is None or geom.is_empty:
@@ -114,18 +122,30 @@ def compute_shape_metrics(geometries):
         gdf_temp = gpd.GeoDataFrame(geometry=[geom], crs='EPSG:4326').to_crs('EPSG:32636')
         geom_utm = gdf_temp.geometry.iloc[0]
 
-        area = geom_utm.area / 1e6  # km²
-        perimeter = geom_utm.length / 1000  # km
+        area = geom_utm.area / 1e6  # km² — actual populated area
+
+        # For MultiPolygon: compactness on convex hull (geographic spread metric).
+        # For Polygon: compactness on the geometry itself.
+        if geom_utm.geom_type == 'MultiPolygon':
+            hull = geom_utm.convex_hull
+            compact_area = hull.area / 1e6
+            compact_perim = hull.length / 1000
+            n_patches_list.append(len(list(geom_utm.geoms)))
+        else:
+            compact_area = area
+            compact_perim = geom_utm.length / 1000
+            n_patches_list.append(1)
 
         # Compactness: 4π*area / perimeter² (1.0 = perfect circle)
-        if perimeter > 0:
-            compactness = (4 * np.pi * area) / (perimeter ** 2)
+        if compact_perim > 0:
+            compactness = (4 * np.pi * compact_area) / (compact_perim ** 2)
             compactness_values.append(compactness)
 
         areas_km2.append(area)
 
     return {
         'mean_compactness': np.mean(compactness_values) if compactness_values else 0,
+        'mean_n_patches': np.mean(n_patches_list) if n_patches_list else 1,
         'mean_area_km2': np.mean(areas_km2) if areas_km2 else 0,
         'std_area_km2': np.std(areas_km2) if areas_km2 else 0,
         'min_area_km2': np.min(areas_km2) if areas_km2 else 0,

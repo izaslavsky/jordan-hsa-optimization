@@ -21,7 +21,9 @@ Code and data accompanying the research paper on delineating Hospital Service Ar
    - Delineates Hospital Service Areas using unified scoring system with mode-specific weight profiles
    - Five optimization modes: FEWEST, FOOTPRINT, DISTANCE, GOVERNORATE_TAU_COVERAGE, GOVERNORATE_FEWEST
    - Pure score-driven optimization with no artificial facility count constraints
-   - Generates optimized HSA boundaries with composite score tracking
+   - Generates two geometry outputs per mode: (1) `{NETWORK}_{MODE}_hsas_circles.geojson` — service-radius circles clipped to Jordan boundary; (2) `{NETWORK}_{MODE}_hsas_v2.geojson` — further clipped to WorldPop constrained inhabited cells, with original circle preserved in `circle_geometry_wkt` column
+   - Generates `{NETWORK}_{MODE}_map.gpkg` GeoPackage with 5 layers: `hsa_circles`, `hsa_boundaries`, `hsa_anchors`, `all_facilities`, `country_boundary`
+   - Composite score tracking and detailed output tables exported to `out/textresults/`
 
 
 #### Disease Modeling Pipeline
@@ -64,7 +66,8 @@ Code and data accompanying the research paper on delineating Hospital Service Ar
   - Population coverage calculations and HSA boundary delineation
 
 - **`hsa_mapping_working.py`** - HSA map generation
-  - Creates professional maps with circular HSA boundaries clipped to country
+  - Creates professional maps showing both service-radius circle outlines (dashed) and WorldPop-clipped inhabited-area patches (filled)
+  - Saves `{NETWORK}_{MODE}_map.gpkg` GeoPackage with 5 layers: `hsa_circles`, `hsa_boundaries`, `hsa_anchors`, `all_facilities`, `country_boundary`
   - Visualization of facilities, boundaries, and population density
 
 - **`hsa_objective_analysis.py`** - HSA results analysis
@@ -125,7 +128,7 @@ All data files use **synthetic patient data** to protect privacy. Boundary and c
   - Source: WorldPop (www.worldpop.org)
 - `data/jor_ppp_2020_constrained.tif` - WorldPop 2020 population density (constrained to settlement patterns, ~7M total)
   - Resolution: 100m × 100m
-  - Alternative population dataset, used as a background population density layer for mapping
+  - Used to clip HSA circles to inhabited areas only (assigns population exclusively to detected building footprint cells; desert cells carry NoData); also used as a background layer in maps
   - Source: WorldPop (www.worldpop.org)
 
 #### Administrative Boundaries (GeoPackage format)
@@ -168,7 +171,7 @@ and climate-health analysis implemented as sequential Jupyter notebooks:
 ```bash
 # Clone repository
 git clone https://github.com/izaslavsky/jordan-hsa-optimization.git
-cd HSA_algo_public
+cd jordan-hsa-optimization
 
 # Install Python dependencies
 pip install -r requirements.txt
@@ -289,7 +292,8 @@ This notebook:
 - Runs five optimization modes with different objectives (FEWEST, FOOTPRINT, DISTANCE, and governorate-based modes)
 - Uses unified scoring system with mode-specific weight profiles
 - Generates HSA boundaries with composite score tracking
-- Outputs optimized HSA configurations to GeoJSON files
+- Outputs two GeoJSON files per mode: service-radius circles (`{NETWORK}_{MODE}_hsas_circles.geojson`) and WorldPop-clipped inhabited-area patches (`{NETWORK}_{MODE}_hsas_v2.geojson`, with `circle_geometry_wkt` column)
+- Outputs a GeoPackage per mode (`{NETWORK}_{MODE}_map.gpkg`) with layers for circles, boundaries, anchors, all facilities, and country boundary
 
 **2. Climate Data Extraction**
 
@@ -316,7 +320,7 @@ The notebook exports 6 CSV files per HSA (precipitation, temperature, soil moist
 
 **3. Probabilistic Population Allocation (Required for Disease Modeling)**
 
-HSAs created in step 2 are **overlapping circular regions** around facilities. Before computing disease rates or weekly disease counts, you must allocate population to facilities and then to HSAs to prevent double/triple counting.
+HSAs created in step 2 define overlapping service areas around facilities. Before computing disease rates or weekly disease counts, you must allocate population to facilities and then to HSAs to prevent double/triple counting.
 
 Open and run `Patient_Allocation_Probabilistic.ipynb`:
 
@@ -446,7 +450,8 @@ and climate associations present in real data.
 ┌─────────────────────────────────────────────────────────────┐
 │ 2. HSA Optimization (HSA_v6_FINAL.ipynb)                    │
 │    Input:   Facility coordinates + population raster        │
-│    Output: Optimized HSA boundaries (5 modes, overlapping)  │
+│    Output: Per mode: circles GeoJSON, inhabited-area        │
+│            patches GeoJSON, and map GeoPackage (5 layers)   │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -626,7 +631,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 📧 Contact
 
 For questions or issues:
-- **GitHub Issues**: [Open an issue](https://github.com/izaslavsky/HSA_algo_public/issues)
+- **GitHub Issues**: [Open an issue](https://github.com/izaslavsky/jordan-hsa-optimization/issues)
 - **Email**: [Contact information]
 
 ---

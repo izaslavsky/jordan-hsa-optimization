@@ -1542,15 +1542,9 @@ def allocate_patients_probabilistic(hsa_geojson_path: str,
 
     # 4. Pixel-level allocations (for downstream compatibility)
     if pixel_allocations is not None:
-        # Save with both naming conventions for compatibility
         pixel_output = output_dir / f'pixel_allocations_{network_type}_{optimization_mode}.csv'
         pixel_allocations.to_csv(pixel_output, index=False)
         print(f"  Saved pixel allocations: {pixel_output.name}")
-
-        # Also save as allocation_details.csv (expected by downstream scripts)
-        details_output = output_dir / f'{network_type}_{optimization_mode}_allocation_details.csv'
-        pixel_allocations.to_csv(details_output, index=False)
-        print(f"  Saved allocation details: {details_output.name}")
 
     print("\n" + "="*80)
     print("PROBABILISTIC ALLOCATION COMPLETE")
