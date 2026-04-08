@@ -29,12 +29,20 @@ DEFAULT_WEEK_END = "2024-01-29"
 
 def _parse_network_mode(hsa_geojson_path):
     stem = Path(hsa_geojson_path).stem
-    # Expected pattern: NETWORK_MODE_hsas_v2
+    # Expected patterns:
+    #   NETWORK_MODE_hsas
+    #   NETWORK_MODE_hsas_v2
+    # where MODE itself may contain underscores, e.g. governorate_fewest.
     parts = stem.split("_")
-    if len(parts) >= 3 and parts[2] == "hsas":
-        return parts[0], parts[1]
-    if len(parts) >= 4 and parts[2] == "hsas" and parts[3].startswith("v"):
-        return parts[0], parts[1]
+    if len(parts) >= 3:
+        try:
+            hsas_idx = parts.index("hsas")
+        except ValueError:
+            hsas_idx = -1
+        if hsas_idx >= 2:
+            network = parts[0]
+            mode = "_".join(parts[1:hsas_idx])
+            return network, mode
     # Fallback to env or defaults
     return os.environ.get("NETWORK", "INF"), os.environ.get("HSA_MODE", "footprint")
 
