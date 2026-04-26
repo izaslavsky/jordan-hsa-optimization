@@ -30,6 +30,7 @@ import warnings
 import argparse
 from pathlib import Path
 import json
+from network_utils import default_target_col
 
 warnings.filterwarnings('ignore')
 OUTPUT_FILE_PREFIX = ""
@@ -605,7 +606,8 @@ def create_summary_table(results_df, output_dir):
 
 def main():
     parser = argparse.ArgumentParser(description='Extreme Event Analysis')
-    parser.add_argument('--network', default='INF', choices=['INF', 'NCD'])
+    parser.add_argument('--network', default='INF',
+                        help='Network label, e.g. INF, NCD, SYNINF, SYNNCD, SYNMODINF, SYNMODNCD')
     parser.add_argument('--hsa-mode', default='footprint')
     parser.add_argument('--out-dir', default='out')
     parser.add_argument('--output-dir', default='out/analysis_extreme_events')
@@ -624,7 +626,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if args.target_col is None:
-        args.target_col = 'diarrheal_count_adjusted' if args.network == 'INF' else 'hypertension_count_adjusted'
+        args.target_col = default_target_col(args.network)
 
     print("="*80)
     print("EXTREME EVENT ANALYSIS")

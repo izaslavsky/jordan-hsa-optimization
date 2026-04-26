@@ -28,6 +28,7 @@ from scipy.spatial.distance import pdist, squareform
 import warnings
 import argparse
 from pathlib import Path
+from network_utils import default_target_col
 import json
 
 warnings.filterwarnings('ignore')
@@ -501,7 +502,8 @@ def plot_spatial_autocorrelation(weekly_df, morans_inv, morans_knn, mean_residua
 
 def main():
     parser = argparse.ArgumentParser(description='Spatial Autocorrelation Analysis')
-    parser.add_argument('--network', default='INF', choices=['INF', 'NCD'])
+    parser.add_argument('--network', default='INF',
+                        help='Network label, e.g. INF, NCD, SYNINF, SYNNCD, SYNMODINF, SYNMODNCD')
     parser.add_argument('--hsa-mode', default='footprint')
     parser.add_argument('--data-dir', default='data')
     parser.add_argument('--out-dir', default='out')
@@ -519,7 +521,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if args.target_col is None:
-        args.target_col = 'diarrheal_count_adjusted' if args.network == 'INF' else 'hypertension_count_adjusted'
+        args.target_col = default_target_col(args.network)
 
     results = run_spatial_autocorrelation_analysis(
         data_dir, out_dir, args.network, args.hsa_mode, args.target_col, output_dir

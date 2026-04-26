@@ -42,6 +42,7 @@ from pathlib import Path
 from datetime import datetime
 import warnings
 warnings.filterwarnings('ignore')
+from network_utils import default_disease_focus
 
 # ============================================================================
 # CONFIGURATION DEFAULTS (can be overridden via CLI)
@@ -60,7 +61,7 @@ DEFAULT_START_DATE = "2022-06-27"  # Start of valid data range
 DEFAULT_END_DATE = "2024-01-29"    # End of valid data range (84 weeks total)
 
 def _default_disease(network):
-    return "diarrheal" if network in ("INF", "SYN") else "hypertension"
+    return default_disease_focus(network)
 
 # Climate file suffixes (fixed structure from GEE exports)
 CLIMATE_SUFFIXES = [
@@ -140,6 +141,49 @@ def load_climate_file(filepath):
     return df
 
 
+def resolve_climate_file_path(climate_dir, hsa_name, suffix, network=None):
+    """
+    Resolve a climate file path for an HSA, tolerating stale trailing underscores
+    in exported filenames.
+    """
+    expected = f"HSA_{hsa_name}_{suffix}"
+    filepath = climate_dir / expected
+
+    if network:
+        network_filename = f"{network}_HSA_{hsa_name}_{suffix}"
+        network_path = climate_dir / network_filename
+        if network_path.exists():
+            return network_path
+
+    if filepath.exists():
+        return filepath
+
+    if network:
+        pattern = f"{network}_HSA_*_{suffix}"
+    else:
+        pattern = f"HSA_*_{suffix}"
+
+    target_name = clean_facility_name(hsa_name)
+    matches = []
+    for candidate in climate_dir.glob(pattern):
+        stem = candidate.stem
+        prefix = f"{network}_HSA_" if network else "HSA_"
+        if not stem.startswith(prefix):
+            continue
+        extracted = stem[len(prefix):]
+        if not extracted.endswith(f"_{suffix[:-4]}") and not extracted.endswith(f"_{suffix}"):
+            continue
+        extracted = extracted[: -len(f"_{suffix[:-4]}")] if extracted.endswith(f"_{suffix[:-4]}") else extracted
+        extracted = extracted[: -len(f"_{suffix}")] if extracted.endswith(f"_{suffix}") else extracted
+        if clean_facility_name(extracted) == target_name:
+            matches.append(candidate)
+
+    if matches:
+        return sorted(matches)[0]
+
+    return None
+
+
 def merge_climate_files_for_hsa(hsa_name, climate_dir, suffixes, network=None):
     """
     Merge all 6 climate file types for a single HSA
@@ -155,18 +199,11 @@ def merge_climate_files_for_hsa(hsa_name, climate_dir, suffixes, network=None):
     dfs = []
 
     for suffix in suffixes:
-        # Construct filename
-        filename = f"HSA_{hsa_name}_{suffix}"
-        filepath = climate_dir / filename
-        if network:
-            network_filename = f"{network}_HSA_{hsa_name}_{suffix}"
-            network_path = climate_dir / network_filename
-            if network_path.exists():
-                filename = network_filename
-                filepath = network_path
+        filepath = resolve_climate_file_path(climate_dir, hsa_name, suffix, network)
 
-        if not filepath.exists():
-            print(f"  [!]  Missing: {filename}")
+        if filepath is None or not filepath.exists():
+            expected = f"{network}_HSA_{hsa_name}_{suffix}" if network else f"HSA_{hsa_name}_{suffix}"
+            print(f"  [!]  Missing: {expected}")
             continue
 
         # Load file
@@ -200,38 +237,14 @@ def merge_climate_files_for_hsa(hsa_name, climate_dir, suffixes, network=None):
     return merged
 
 
-def get_all_hsa_names(climate_dir, network=None):
-    """Extract unique HSA names from climate filenames"""
-    hsa_names = set()
-
-    pattern = "HSA_*_precip_lags.csv"
-    if network:
-        pattern = f"{network}_HSA_*_precip_lags.csv"
-
-    for filepath in climate_dir.glob(pattern):
-        # Extract HSA name from filename
-        filename = filepath.stem  # Remove .csv
-        # Remove optional "{network}_" prefix, then "HSA_" prefix and suffix
-        if network and filename.startswith(f"{network}_HSA_"):
-            filename = filename.replace(f"{network}_HSA_", "")
-        else:
-            filename = filename.replace("HSA_", "")
-        hsa_name = filename.replace("_precip_lags", "")
-        hsa_names.add(hsa_name)
-
-    # Fallback to non-networked names if none found
-    if not hsa_names and network:
-        for filepath in climate_dir.glob("HSA_*_precip_lags.csv"):
-            filename = filepath.stem
-            hsa_name = filename.replace("HSA_", "").replace("_precip_lags", "")
-            hsa_names.add(hsa_name)
-
-    return sorted(list(hsa_names))
-
-
 def create_temporal_features(df):
     """Create temporal features from week_start"""
     df = df.copy()
+
+    # Some upstream climate exports already carry temporal helper columns.
+    # Drop them here so we regenerate a single clean set deterministically.
+    existing_temporal_cols = ['week_of_year', 'month', 'quarter', 'season', 'days_since_start', 'week_number']
+    df = df.drop(columns=[c for c in existing_temporal_cols if c in df.columns], errors='ignore')
 
     df['week_of_year'] = df['week_start'].dt.isocalendar().week
     df['month'] = df['week_start'].dt.month
@@ -489,47 +502,9 @@ def main():
     print("="*80)
 
     # -------------------------------------------------------------------------
-    # STEP 1: Get all HSA names
+    # STEP 1: Load diagnosis data and determine authoritative HSA list
     # -------------------------------------------------------------------------
-    print("\n[STEP 1] Identifying HSAs...")
-    hsa_names = get_all_hsa_names(CLIMATE_DIR, NETWORK)
-    print(f"  Found {len(hsa_names)} HSAs")
-    for i, name in enumerate(hsa_names, 1):
-        print(f"    {i:2d}. {name}")
-
-    # -------------------------------------------------------------------------
-    # STEP 2: Merge climate files for each HSA
-    # -------------------------------------------------------------------------
-    print("\n[STEP 2] Merging climate files for each HSA...")
-    all_hsa_data = []
-
-    for i, hsa_name in enumerate(hsa_names, 1):
-        print(f"\n  [{i}/{len(hsa_names)}] Processing: {hsa_name}")
-
-        hsa_df = merge_climate_files_for_hsa(hsa_name, CLIMATE_DIR, CLIMATE_SUFFIXES, NETWORK)
-
-        if hsa_df is None:
-            print(f"    [X] Failed to merge files for {hsa_name}")
-            continue
-
-        # Add HSA identifier (normalized)
-        hsa_df['hsa_id'] = clean_facility_name(hsa_name)
-
-        all_hsa_data.append(hsa_df)
-        print(f"    [OK] Merged {len(hsa_df)} weeks, {len(hsa_df.columns)} features")
-
-    # Concatenate all HSAs
-    if len(all_hsa_data) == 0:
-        print("\n[X] ERROR: No HSA data could be merged!")
-        return
-
-    climate_df = pd.concat(all_hsa_data, ignore_index=True)
-    print(f"\n  [OK] Combined climate data: {len(climate_df)} records, {len(climate_df.columns)} columns")
-
-    # -------------------------------------------------------------------------
-    # STEP 3: Load diagnosis data and filter to valid date range
-    # -------------------------------------------------------------------------
-    print("\n[STEP 3] Loading diagnosis data...")
+    print("\n[STEP 1] Loading diagnosis data...")
 
     if not DIAGNOSIS_FILE.exists():
         print(f"  [X] ERROR: Diagnosis file not found: {DIAGNOSIS_FILE}")
@@ -560,9 +535,44 @@ def main():
     print(f"    HSAs: {diagnosis_df['hsa_id'].nunique()}")
     print(f"    Date range: {diagnosis_df['week_start'].min()} to {diagnosis_df['week_start'].max()}")
 
+    hsa_names = sorted(diagnosis_df['hsa_id'].unique())
+    print(f"\n  Using diagnosis-derived HSA set as authoritative:")
+    print(f"    Count: {len(hsa_names)}")
+    for i, name in enumerate(hsa_names, 1):
+        print(f"    {i:2d}. {name}")
+
+    # -------------------------------------------------------------------------
+    # STEP 2: Merge climate files for each authoritative HSA
+    # -------------------------------------------------------------------------
+    print("\n[STEP 2] Merging climate files for each HSA...")
+    all_hsa_data = []
+
+    for i, hsa_name in enumerate(hsa_names, 1):
+        print(f"\n  [{i}/{len(hsa_names)}] Processing: {hsa_name}")
+
+        hsa_df = merge_climate_files_for_hsa(hsa_name, CLIMATE_DIR, CLIMATE_SUFFIXES, NETWORK)
+
+        if hsa_df is None:
+            print(f"    [X] Failed to merge files for {hsa_name}")
+            continue
+
+        # Add HSA identifier (normalized)
+        hsa_df['hsa_id'] = clean_facility_name(hsa_name)
+
+        all_hsa_data.append(hsa_df)
+        print(f"    [OK] Merged {len(hsa_df)} weeks, {len(hsa_df.columns)} features")
+
+    # Concatenate all HSAs
+    if len(all_hsa_data) == 0:
+        print("\n[X] ERROR: No HSA data could be merged!")
+        return
+
+    climate_df = pd.concat(all_hsa_data, ignore_index=True)
+    print(f"\n  [OK] Combined climate data: {len(climate_df)} records, {len(climate_df.columns)} columns")
+
     # Check for HSA count mismatch with climate data
     diagnosis_hsas = set(diagnosis_df['hsa_id'].unique())
-    climate_hsas = set(hsa_names)
+    climate_hsas = set(climate_df['hsa_id'].unique())
 
     if len(diagnosis_hsas) != len(climate_hsas):
         print(f"\n  [!] WARNING: HSA count mismatch!")
@@ -578,9 +588,9 @@ def main():
             print(f"    In climate but not diagnosis: {in_climate_not_diagnosis}")
 
     # -------------------------------------------------------------------------
-    # STEP 4: Merge climate and diagnosis data
+    # STEP 3: Merge climate and diagnosis data
     # -------------------------------------------------------------------------
-    print("\n[STEP 4] Merging climate and diagnosis data...")
+    print("\n[STEP 3] Merging climate and diagnosis data...")
 
     # Merge on hsa_id and week_start
     merged_df = climate_df.merge(
@@ -602,9 +612,9 @@ def main():
     print(f"    Missing diagnosis data: {merged_df[TARGET_COL].isna().sum()} records")
 
     # -------------------------------------------------------------------------
-    # STEP 5: Data cleaning - PRIORITIZE KEEPING HSAs
+    # STEP 4: Data cleaning - PRIORITIZE KEEPING HSAs
     # -------------------------------------------------------------------------
-    print("\n[STEP 5] Cleaning data...")
+    print("\n[STEP 4] Cleaning data...")
     print(f"  Strategy: Keep all HSAs, drop variables with excessive missing data")
     print(f"  Note: Zeros are valid values in arid regions (not treated as missing)")
     print(f"  Note: Imputation will be done during modeling phase to avoid data leakage")
@@ -661,9 +671,9 @@ def main():
         print(f"  [OK] No missing climate data")
 
     # -------------------------------------------------------------------------
-    # STEP 6: Feature engineering
+    # STEP 5: Feature engineering
     # -------------------------------------------------------------------------
-    print("\n[STEP 6] Creating engineered features...")
+    print("\n[STEP 5] Creating engineered features...")
 
     # Temporal features
     merged_df = create_temporal_features(merged_df)
@@ -674,12 +684,13 @@ def main():
     print(f"  [OK] Added interaction features")
 
     # -------------------------------------------------------------------------
-    # STEP 7: Feature selection (deferred to modeling after temporal split)
+    # STEP 6: Feature selection (deferred to modeling after temporal split)
     # -------------------------------------------------------------------------
-    print("\n[STEP 7] Deferring feature selection...")
+    print("\n[STEP 6] Deferring feature selection...")
 
     # Get all potential features
     exclude_cols = ['hsa_id', 'FacilityName', 'week_start', 'week_start_iso',
+                    'week_number', 'week_of_year', 'month', 'season',
                     f"{DISEASE_FOCUS}_count", TARGET_COL, '.geo', 'system:index']
     all_features = [col for col in merged_df.columns if col not in exclude_cols]
 
@@ -689,9 +700,9 @@ def main():
     selected_features = all_features
 
     # -------------------------------------------------------------------------
-    # STEP 8: Create final dataset
+    # STEP 7: Create final dataset
     # -------------------------------------------------------------------------
-    print("\n[STEP 8] Creating final dataset...")
+    print("\n[STEP 7] Creating final dataset...")
 
     # Select columns for final dataset
     final_cols = ['hsa_id', 'week_start', 'week_number', 'week_of_year',
@@ -706,12 +717,12 @@ def main():
     print(f"    Records: {len(final_df)}")
     print(f"    Features: {len(selected_features)}")
     print(f"    HSAs: {final_df['hsa_id'].nunique()}")
-    print(f"    Weeks: {final_df['week_number'].max()}")
+    print(f"    Weeks: {int(final_df['week_number'].max())}")
 
     # -------------------------------------------------------------------------
-    # STEP 9: Save complete dataset (no splitting - done at modeling phase)
+    # STEP 8: Save complete dataset (no splitting - done at modeling phase)
     # -------------------------------------------------------------------------
-    print("\n[STEP 9] Saving complete dataset...")
+    print("\n[STEP 8] Saving complete dataset...")
     print("  Note: Train/validation/test splitting will be done during modeling phase")
 
     # Save full dataset
@@ -720,9 +731,9 @@ def main():
     print(f"  [OK] Saved: {output_path}")
 
     # -------------------------------------------------------------------------
-    # STEP 10: Create metadata
+    # STEP 9: Create metadata
     # -------------------------------------------------------------------------
-    print("\n[STEP 10] Creating metadata...")
+    print("\n[STEP 9] Creating metadata...")
 
     metadata_path = OUTPUT_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_metadata.json"
     metadata = create_metadata(final_df, selected_features, metadata_path)
@@ -736,7 +747,7 @@ def main():
     print(f"\nDataset Summary:")
     print(f"  Total records: {len(final_df)}")
     print(f"  HSAs: {final_df['hsa_id'].nunique()}")
-    print(f"  Weeks: {final_df['week_number'].max()}")
+    print(f"  Weeks: {int(final_df['week_number'].max())}")
     print(f"  Features: {len(selected_features)}")
     print(f"  Date range: {final_df['week_start'].min()} to {final_df['week_start'].max()}")
 

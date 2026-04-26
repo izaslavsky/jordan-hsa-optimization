@@ -38,7 +38,7 @@ STEP 6: Climate-Health Modeling (run_climate_health_modeling)
 
 ### Synthetic Patient Data and Facility Coordinates
 
-Files use `SYNINF_` prefix for infectious diseases and `SYNNCD_` prefix for non-communicable diseases:
+Files use `SYNINF_` prefix for infectious diseases and `SYNNCD_` prefix for non-communicable diseases. The target data folder may also contain `SYNMODINF_` and `SYNMODNCD_`, which are synthetic variants designed to better approximate downstream modeling results:
 
 ```
 data/
@@ -360,7 +360,7 @@ python train_improved_models.py
    - Calls `generate_weekly_disease_counts_adjusted.py` and `prepare_ml_dataset.py`
 4. **STEP 6**: Climate-health modeling notebook (`run_climate_health_modeling.ipynb`)
    - Calls `climate_health_modeling_*.py` and `train_*.py` scripts
-5. **Synthetic Data**: All source data files present (SYNINF_/SYNNCD_ prefix)
+5. **Synthetic Data**: All source data files present (`SYNINF_`/`SYNNCD_` prefixes, plus `SYNMODINF_`/`SYNMODNCD_` modeling-oriented variants)
 6. **Documentation**: README.md, CLIMATE_HEALTH_MODELING.md
 
 ### ⚠️ Requires Running (GEE or Notebooks)

@@ -622,21 +622,21 @@ def main():
     full_test = pars_results[(pars_results['split'] == 'test')].set_index('model')['r2']
 
     print("\nComponent contributions (ElasticNet):")
-    ar_r2 = ar_test.get('elasticnet', 0)
-    ar_season_r2 = ar_seasonal_test.get('elasticnet', 0)
-    full_r2 = full_test.get('elasticnet', 0)
-    print(f"  AR only:              R² = {ar_r2:.4f}")
-    print(f"  AR + Seasonal:        R² = {ar_season_r2:.4f}  (seasonal adds {ar_season_r2 - ar_r2:+.4f})")
-    print(f"  AR + Seasonal + Clim: R² = {full_r2:.4f}  (climate adds {full_r2 - ar_season_r2:+.4f})")
+    elasticnet_ar_r2 = ar_test.get('elasticnet', 0)
+    elasticnet_ar_season_r2 = ar_seasonal_test.get('elasticnet', 0)
+    elasticnet_full_r2 = full_test.get('elasticnet', 0)
+    print(f"  AR only:              R² = {elasticnet_ar_r2:.4f}")
+    print(f"  AR + Seasonal:        R² = {elasticnet_ar_season_r2:.4f}  (seasonal adds {elasticnet_ar_season_r2 - elasticnet_ar_r2:+.4f})")
+    print(f"  AR + Seasonal + Clim: R² = {elasticnet_full_r2:.4f}  (climate adds {elasticnet_full_r2 - elasticnet_ar_season_r2:+.4f})")
 
     print("\nClimate contribution by model (after seasonal controls):")
     climate_contribs = []
     for model in ['ridge', 'elasticnet', 'random_forest', 'gradient_boosting']:
-        ar_season_r2 = ar_seasonal_test.get(model, 0)
-        full_r2 = full_test.get(model, 0)
-        contrib = full_r2 - ar_season_r2
-        pct = (contrib / full_r2 * 100) if full_r2 > 0 else 0
-        print(f"  {model:20s} AR+Season={ar_season_r2:.4f} Full={full_r2:.4f} Climate Δ={contrib:+.4f} ({pct:.1f}%)")
+        model_ar_season_r2 = ar_seasonal_test.get(model, 0)
+        model_full_r2 = full_test.get(model, 0)
+        contrib = model_full_r2 - model_ar_season_r2
+        pct = (contrib / model_full_r2 * 100) if model_full_r2 > 0 else 0
+        print(f"  {model:20s} AR+Season={model_ar_season_r2:.4f} Full={model_full_r2:.4f} Climate Δ={contrib:+.4f} ({pct:.1f}%)")
         climate_contribs.append(contrib)
 
     # Extended interpretation
@@ -644,17 +644,17 @@ def main():
     print("INTERPRETATION: CLIMATE CONTRIBUTION")
     print("="*70)
 
-    avg_seasonal_contrib = ar_season_r2 - ar_r2
+    elasticnet_seasonal_contrib = elasticnet_ar_season_r2 - elasticnet_ar_r2
     avg_climate_contrib = np.mean(climate_contribs) if climate_contribs else 0
 
     print(f"""
 HIERARCHICAL VARIANCE DECOMPOSITION (using ElasticNet):
 -------------------------------------------------------
-1. AR features (lag-1, lag-2) explain:    R² = {ar_r2:.4f}
+1. AR features (lag-1, lag-2) explain:    R² = {elasticnet_ar_r2:.4f}
    → Week-to-week persistence dominates prediction
 
-2. Adding seasonal controls improves by:  Δ = {avg_seasonal_contrib:+.4f}
-   → Seasonal patterns add {'meaningful' if avg_seasonal_contrib > 0.005 else 'minimal'} information beyond AR
+2. Adding seasonal controls improves by:  Δ = {elasticnet_seasonal_contrib:+.4f}
+   → Seasonal patterns add {'meaningful' if elasticnet_seasonal_contrib > 0.005 else 'minimal'} information beyond AR
 
 3. Adding climate variables improves by:  Δ = {avg_climate_contrib:+.4f}
    → Climate contributes {'modestly' if avg_climate_contrib > 0.005 else 'minimally' if avg_climate_contrib >= 0 else 'negatively'} beyond AR+seasonal
@@ -680,11 +680,12 @@ KEY FINDING:
         print("It means climate's effect is MEDIATED through seasonal patterns already captured.")
 
     # Save extended analysis
+    # Keep this JSON aligned with the ElasticNet rows in the saved result tables.
     extended_analysis = {
-        'ar_only_r2': float(ar_r2),
-        'ar_seasonal_r2': float(ar_season_r2),
-        'full_model_r2': float(full_r2),
-        'seasonal_contribution': float(avg_seasonal_contrib),
+        'ar_only_r2': float(elasticnet_ar_r2),
+        'ar_seasonal_r2': float(elasticnet_ar_season_r2),
+        'full_model_r2': float(elasticnet_full_r2),
+        'seasonal_contribution': float(elasticnet_seasonal_contrib),
         'climate_contribution': float(avg_climate_contrib),
         'interpretation': 'climate_adds_value' if avg_climate_contrib > 0.005 else 'climate_absorbed_by_seasonality'
     }

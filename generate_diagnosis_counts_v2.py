@@ -332,10 +332,14 @@ def create_diagnosis_tables(
     total_counts = total_counts[['healthfacility', 'healthfacilitytype', 'governorate', 'total_diagnoses', 'Latitude', 'Longitude']]
     total_counts = total_counts.sort_values('total_diagnoses', ascending=False)
 
-    # Save
-    total_file = OUT_DIR / f'{network}_{hsa_mode}_diagnosis_counts_total.csv'
+    # Save canonical generic output plus mode-specific compatibility copy.
+    total_file = OUT_DIR / f'{network}_diagnosis_counts_total.csv'
     total_counts.to_csv(total_file, index=False)
     print(f"  [OK] Saved: {total_file.name} ({len(total_counts)} facilities)")
+    total_mode_file = OUT_DIR / f'{network}_{hsa_mode}_diagnosis_counts_total.csv'
+    if total_mode_file != total_file:
+        total_counts.to_csv(total_mode_file, index=False)
+        print(f"  [OK] Saved compatibility copy: {total_mode_file.name}")
 
     # Table 2: By diagnosis group
     group_counts = df_filtered.groupby(['healthfacility', 'governorate', 'diagnosis_group']).size().reset_index(name='diagnosis_count')
@@ -351,10 +355,14 @@ def create_diagnosis_tables(
     group_counts = group_counts[['healthfacility', 'healthfacilitytype', 'governorate', 'diagnosis_group', 'diagnosis_count', 'Latitude', 'Longitude']]
     group_counts = group_counts.sort_values(['healthfacility', 'diagnosis_count'], ascending=[True, False])
 
-    # Save
-    group_file = OUT_DIR / f'{network}_{hsa_mode}_diagnosis_counts_by_group.csv'
+    # Save canonical generic output plus mode-specific compatibility copy.
+    group_file = OUT_DIR / f'{network}_diagnosis_counts_by_group.csv'
     group_counts.to_csv(group_file, index=False)
     print(f"  [OK] Saved: {group_file.name} ({len(group_counts)} rows)")
+    group_mode_file = OUT_DIR / f'{network}_{hsa_mode}_diagnosis_counts_by_group.csv'
+    if group_mode_file != group_file:
+        group_counts.to_csv(group_mode_file, index=False)
+        print(f"  [OK] Saved compatibility copy: {group_mode_file.name}")
 
     # Table 3: Pivot table
     pivot = df_filtered.pivot_table(
@@ -382,10 +390,14 @@ def create_diagnosis_tables(
     pivot = pivot[first_cols + sorted(other_cols)]
     pivot = pivot.sort_values('total_diagnoses', ascending=False)
 
-    # Save
-    pivot_file = OUT_DIR / f'{network}_{hsa_mode}_diagnosis_counts_pivot.csv'
+    # Save canonical generic output plus mode-specific compatibility copy.
+    pivot_file = OUT_DIR / f'{network}_diagnosis_counts_pivot.csv'
     pivot.to_csv(pivot_file, index=False)
     print(f"  [OK] Saved: {pivot_file.name} ({len(pivot)} facilities)")
+    pivot_mode_file = OUT_DIR / f'{network}_{hsa_mode}_diagnosis_counts_pivot.csv'
+    if pivot_mode_file != pivot_file:
+        pivot.to_csv(pivot_mode_file, index=False)
+        print(f"  [OK] Saved compatibility copy: {pivot_mode_file.name}")
 
     return total_counts, group_counts, pivot
 
@@ -501,9 +513,13 @@ def main():
 
         print(f"\nOutput files:")
         for network in networks:
-            print(f"  - {network}_{args.hsa_mode}_diagnosis_counts_total.csv")
-            print(f"  - {network}_{args.hsa_mode}_diagnosis_counts_by_group.csv")
-            print(f"  - {network}_{args.hsa_mode}_diagnosis_counts_pivot.csv")
+            print(f"  - {network}_diagnosis_counts_total.csv")
+            print(f"  - {network}_diagnosis_counts_by_group.csv")
+            print(f"  - {network}_diagnosis_counts_pivot.csv")
+            if args.hsa_mode:
+                print(f"  - {network}_{args.hsa_mode}_diagnosis_counts_total.csv")
+                print(f"  - {network}_{args.hsa_mode}_diagnosis_counts_by_group.csv")
+                print(f"  - {network}_{args.hsa_mode}_diagnosis_counts_pivot.csv")
         print(f"  - {report_prefix}_patient_data_discrepancies.txt")
 
         return 0

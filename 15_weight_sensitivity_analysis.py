@@ -512,7 +512,8 @@ def run_weight_sensitivity_analysis(out_dir, network, hsa_mode, output_dir):
 
 def main():
     parser = argparse.ArgumentParser(description='Weight Sensitivity Analysis')
-    parser.add_argument('--network', default='INF', choices=['INF', 'NCD'])
+    parser.add_argument('--network', default='INF',
+                        help='Network label, e.g. INF, NCD, SYNINF, SYNNCD, SYNMODINF, SYNMODNCD')
     parser.add_argument('--hsa-mode', default='footprint')
     parser.add_argument('--out-dir', default='out')
     parser.add_argument('--output-dir', default='out/analysis_weight_sensitivity')

@@ -29,6 +29,7 @@ import warnings
 import argparse
 from pathlib import Path
 import json
+from network_utils import default_target_col
 from itertools import product
 
 warnings.filterwarnings('ignore')
@@ -413,7 +414,8 @@ def create_summary_table(sensitivity_df, output_dir):
 
 def main():
     parser = argparse.ArgumentParser(description='Gravity Model Sensitivity Analysis')
-    parser.add_argument('--network', default='INF', choices=['INF', 'NCD'])
+    parser.add_argument('--network', default='INF',
+                        help='Network label, e.g. INF, NCD, SYNINF, SYNNCD, SYNMODINF, SYNMODNCD')
     parser.add_argument('--hsa-mode', default='footprint')
     parser.add_argument('--data-dir', default='data')
     parser.add_argument('--out-dir', default='out')
@@ -435,7 +437,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if args.target_col is None:
-        args.target_col = 'diarrheal_count_adjusted' if args.network == 'INF' else 'hypertension_count_adjusted'
+        args.target_col = default_target_col(args.network)
 
     print("="*80)
     print("GRAVITY MODEL SENSITIVITY ANALYSIS")

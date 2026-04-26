@@ -27,6 +27,7 @@ import warnings
 import argparse
 from pathlib import Path
 import json
+from network_utils import default_target_col
 
 warnings.filterwarnings('ignore')
 OUTPUT_FILE_PREFIX = ""
@@ -637,7 +638,8 @@ def create_supplement_table(results_df, decomposition, output_dir):
 
 def main():
     parser = argparse.ArgumentParser(description='Variance Decomposition Analysis')
-    parser.add_argument('--network', default='INF', choices=['INF', 'NCD'])
+    parser.add_argument('--network', default='INF',
+                        help='Network label, e.g. INF, NCD, SYNINF, SYNNCD, SYNMODINF, SYNMODNCD')
     parser.add_argument('--hsa-mode', default='footprint')
     parser.add_argument('--input-csv', default=None, help='Path to modeling dataset')
     parser.add_argument('--output-dir', default='out/analysis_variance_decomposition')
@@ -648,7 +650,7 @@ def main():
 
     # Set defaults based on network
     if args.target_col is None:
-        args.target_col = 'diarrheal_count_adjusted' if args.network == 'INF' else 'hypertension_count_adjusted'
+        args.target_col = default_target_col(args.network)
 
     if args.input_csv is None:
         args.input_csv = f'out/modeling/{args.network}_{args.hsa_mode}_modeling_dataset.csv'

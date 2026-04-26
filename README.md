@@ -142,16 +142,16 @@ Source: OpenStreetMap, manually aligned and verified.
 
 #### Synthetic Patient Data and Facility Coordinates
 
-All patient data is synthetic to protect privacy. Files use `SYNINF_` prefix for infectious diseases and `SYNNCD_` prefix for non-communicable diseases:
+All patient data is synthetic to protect privacy. Files use `SYNINF_` prefix for infectious diseases and `SYNNCD_` prefix for non-communicable diseases. The repo also supports `SYNMODINF_` and `SYNMODNCD_`, which are synthetic variants designed to better approximate downstream modeling results:
 
 - `data/SYNINF_facility_coordinates.csv` - Infectious disease facility locations (lat/lon)
 - `data/SYNNCD_facility_coordinates.csv` - Non-communicable disease facility locations (lat/lon)
-- `data/SYNINF_groups_of_diagnoses.csv` - ICD code groupings for infectious diseases
-- `data/SYNNCD_groups_of_diagnoses.csv` - ICD code groupings for non-communicable diseases
+- `data/SYNINF_groups_of_diagnoses.csv` - Diagnosis code groupings for infectious diseases
+- `data/SYNNCD_groups_of_diagnoses.csv` - Diagnosis code groupings for non-communicable diseases
 - `data/SYNINF_patient_visits.csv` - Synthetic infectious disease visits
 - `data/SYNNCD_patient_visits.csv` - Synthetic non-communicable disease visits
 
-**Note**: Synthetic data preserves statistical properties of real data (distributions, correlations) but contains no actual patient information. The `SYN` prefix indicates synthetic data.
+**Note**: Synthetic data preserves statistical properties of real data (distributions, correlations) but contains no actual patient information. The `SYN` prefix indicates synthetic data. `SYNMODINF` and `SYNMODNCD` are modeling-oriented synthetic datasets intended to better reproduce the behavior of the downstream climate-health pipeline.
 
 ## 🚀 Quick Start
 
@@ -598,17 +598,20 @@ Predictive models for weekly disease incidence using climate variables and disea
 If you use this code or data in your research, please cite:
 
 ```bibtex
-@software{hsa_climate_health_2025,
-  title = {Hospital Service Area Optimization and Climate-Health Analysis},
-  author = {{Ilya Zaslavsky}},
+@article{zaslavsky2025multi,
+  title = {Multi-Objective Optimization for Hospital Service Area Delineation},
+  author = {Zaslavsky, Ilya and Lamont, Stephan and Hussien, Moawiah Omar and Abuidhail, Jamila and Kirkpatrick, Christine and Al-Delaimy, Wael K},
   year = {2025},
-  url = {https://github.com/izaslavsky/jordan-hsa-optimization},
-  note = {GitHub repository}
+  url = {https://essopenarchive.org/doi/full/10.22541/essoar.15002169/v1},
+  doi = {10.22541/essoar.15002169/v1},
+  note = {ESS Open Archive preprint}
 }
 ```
 
 **Related Publication**:
-> [Citation will be added upon publication]
+Zaslavsky, Ilya; Lamont, Stephan; Hussien, Moawiah Omar; Abuidhail, Jamila; Kirkpatrick, Christine; and Al-Delaimy, Wael K. *Multi-Objective Optimization for Hospital Service Area Delineation*. ESS Open Archive. https://essopenarchive.org/doi/full/10.22541/essoar.15002169/v1. DOI: https://doi.org/10.22541/essoar.15002169/v1
+
+
 
 ## 📄 License
 

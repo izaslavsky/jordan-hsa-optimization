@@ -251,16 +251,16 @@ districts.plot()
 
 ### Synthetic Patient Data and Facility Coordinates
 
-Files use `SYNINF_` prefix for infectious diseases and `SYNNCD_` prefix for non-communicable diseases:
+Files use `SYNINF_` prefix for infectious diseases and `SYNNCD_` prefix for non-communicable diseases. The `SYNMODINF_` and `SYNMODNCD_` datasets are additional synthetic variants designed to better approximate downstream modeling results:
 
 - `data/SYNINF_facility_coordinates.csv` - Infectious disease facilities (lat/lon)
 - `data/SYNNCD_facility_coordinates.csv` - Non-communicable disease facilities (lat/lon)
 - `data/SYNINF_patient_visits.csv` - Synthetic infectious disease visits
 - `data/SYNNCD_patient_visits.csv` - Synthetic non-communicable disease visits
-- `data/SYNINF_groups_of_diagnoses.csv` - ICD code groupings for infectious diseases
-- `data/SYNNCD_groups_of_diagnoses.csv` - ICD code groupings for non-communicable diseases
+- `data/SYNINF_groups_of_diagnoses.csv` - Diagnosis code groupings for infectious diseases
+- `data/SYNNCD_groups_of_diagnoses.csv` - Diagnosis code groupings for non-communicable diseases
 
-**Privacy Note**: All patient data is 100% synthetic. No real patient information is included.
+**Privacy Note**: All patient data is 100% synthetic. No real patient information is included. `SYNMODINF` and `SYNMODNCD` are modeling-oriented synthetic datasets intended to more closely mimic modeling outputs.
 
 ---
 

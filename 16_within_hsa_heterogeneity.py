@@ -472,7 +472,8 @@ def generate_report(within_stats, between_stats, decomposition, comparison_stats
 
 def main():
     parser = argparse.ArgumentParser(description='Within-HSA Climate Heterogeneity Analysis')
-    parser.add_argument('--network', default='INF', choices=['INF', 'NCD'])
+    parser.add_argument('--network', default='INF',
+                        help='Network label, e.g. INF, NCD, SYNINF, SYNNCD, SYNMODINF, SYNMODNCD')
     parser.add_argument('--hsa-mode', default='footprint')
     parser.add_argument('--data-dir', default='data')
     parser.add_argument('--out-dir', default='out')

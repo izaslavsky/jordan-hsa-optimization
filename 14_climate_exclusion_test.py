@@ -739,7 +739,8 @@ def generate_report(results: Dict, output_path: Path):
 def main():
     """Main analysis function."""
     parser = argparse.ArgumentParser(description="Phase 1B: Climate Effects in Excluded Zones")
-    parser.add_argument("--network", default="INF", choices=["INF", "NCD"])
+    parser.add_argument("--network", default="INF",
+                        help='Network label, e.g. INF, NCD, SYNINF, SYNNCD, SYNMODINF, SYNMODNCD')
     parser.add_argument("--hsa-mode", default="footprint")
     parser.add_argument("--data-dir", default="data")
     parser.add_argument("--out-dir", default="out")

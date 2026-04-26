@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 import argparse
 from scipy.spatial import cKDTree
+from network_utils import default_disease_focus, secondary_label
 
 # Default date configuration (can be overridden via CLI)
 DEFAULT_WEEK_START = "2019-01-07"
@@ -47,10 +48,10 @@ def _parse_network_mode(hsa_geojson_path):
     return os.environ.get("NETWORK", "INF"), os.environ.get("HSA_MODE", "footprint")
 
 def _default_disease(network):
-    return "diarrheal" if network in ("INF", "SYNINF") else "hypertension"
+    return default_disease_focus(network)
 
 def _secondary_label(network):
-    return "infectious" if network in ("INF", "SYNINF") else "ncd"
+    return secondary_label(network)
 
 parser = argparse.ArgumentParser(description="Generate adjusted weekly disease counts")
 parser.add_argument("hsa_geojson", nargs="?", default=None)
