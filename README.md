@@ -635,7 +635,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 For questions or issues:
 - **GitHub Issues**: [Open an issue](https://github.com/izaslavsky/jordan-hsa-optimization/issues)
-- **Email**: [Contact information]
+- **Email**: izaslavsky@ucsd.edu
 
 ---
 
