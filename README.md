@@ -458,10 +458,10 @@ and climate associations present in real data.
 **Disease Modeling Workflow** (Steps 3-7 - requires population allocation):
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ 3. Population Allocation (Patient_Allocation_Probabilistic)  │
+│ 3. Population Allocation (Patient_Allocation_Probabilistic) │
 │    Input:  HSA boundaries + population raster               │
 │    Output: pixel_allocations_*.csv, hsa_populations_*.csv   │
-│    WHY:    HSAs overlap - probabilistic gravity allocation   │
+│    WHY:    HSAs overlap - probabilistic gravity allocation  │
 └─────────────────────────────────────────────────────────────┘
                               │
                               ▼
@@ -469,7 +469,7 @@ and climate associations present in real data.
 │ 4. Weekly Climate Aggregation (GEE_HSA_Weekly_Climate)      │
 │    Input:  HSA boundaries + Google Earth Engine datasets    │
 │    Output: Climate CSVs exported to Google Drive            │
-│    ACTION: Download the exported CSVs to                                 │
+│    ACTION: Download the exported CSVs to                    │
 │       out/DRIVE_CLIMATE_BY_HSA_DOWNLOAD/FINAL_HSA_CLIMATE   │
 └─────────────────────────────────────────────────────────────┘
 
@@ -501,7 +501,7 @@ and climate associations present in real data.
 │ 6. Climate-Health Modeling (run_climate_health_modeling)    │
 │    Input:  Modeling dataset (climate + AR features)         │
 │    Output: Trained models + metrics (out/modeling/)         │
-│    Also runs: Sensitivity analyses (scripts 08-16)         │
+│    Also runs: Sensitivity analyses (scripts 08-16)          │
 └─────────────────────────────────────────────────────────────┘
 ```
 
