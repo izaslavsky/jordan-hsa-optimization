@@ -483,7 +483,7 @@ and climate associations present in real data.
 ║    │ 5a. Weekly Disease Counts                         │    ║
 ║    │     Script: generate_weekly_disease_counts_       │    ║
 ║    │             adjusted.py                           │    ║
-║    │     Input:  Population allocations + visit data    │    ║
+║    │     Input:  Population allocations + visit data   │    ║
 ║    │     Output: Weekly disease counts per HSA         │    ║
 ║    └───────────────────────────────────────────────────┘    ║
 ║                            │                                ║
