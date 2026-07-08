@@ -11,16 +11,11 @@ dist/
 build/
 
 # Jupyter
-.ipynb_checkpoints
-# Note: The main notebooks are tracked (HSA_v6_FINAL.ipynb is the primary production notebook,
-# Patient_Allocation_Probabilistic.ipynb and Generate_Modeling_Dataset.ipynb for disease modeling workflow,
-# GEE_Climate_Features_by_Facilities.ipynb, GEE_HSA_Weekly_Climate_Lagged.ipynb)
-# All other notebooks are ignored
+.ipynb_checkpoints/
 *.ipynb
 !HSA_v6_FINAL.ipynb
 !Patient_Allocation_Probabilistic.ipynb
 !Generate_Modeling_Dataset.ipynb
-!HSA_v5_FINAL_PENALTY_BASED.ipynb
 !GEE_Climate_Features_by_Facilities.ipynb
 !GEE_HSA_Weekly_Climate_Lagged.ipynb
 !GEE_local_Climate_Features_by_Facilities.ipynb
@@ -28,6 +23,12 @@ build/
 !GEE_local_HSA_Weekly_Climate_Lagged_chunked.ipynb
 !compare_delineations.ipynb
 !run_climate_health_modeling.ipynb
+
+# Documentation — only the three public-facing docs are tracked
+*.md
+!README.md
+!SETUP_INSTRUCTIONS.md
+!DATA_FLOW_ANALYSIS.md
 
 # IDEs
 .vscode/
