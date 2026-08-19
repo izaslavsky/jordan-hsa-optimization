@@ -1,394 +1,155 @@
 # Setup Instructions
 
-This guide will help you set up your environment and run the HSA optimization and climate extraction workflows.
+These instructions configure a clean environment for the public synthetic-data workflow. Commands assume macOS or Linux and a shell opened at the repository root.
 
-## Prerequisites
-
-### Required Software
-- **Python 3.8 or higher** ([Download](https://www.python.org/downloads/))
-- **Git** ([Download](https://git-scm.com/downloads))
-- **Jupyter Notebook** (installed via requirements.txt)
-
-### Optional Software
-- **QGIS** or **ArcGIS** - For viewing/editing GeoPackage boundary files ([QGIS Download](https://qgis.org/download/))
-- **Google Earth Engine Account** - Required only for climate extraction notebooks ([Sign up](https://earthengine.google.com/signup/))
-
----
-
-## Installation Steps
-
-### 1. Clone the Repository
+## 1. Clone and create an isolated Python environment
 
 ```bash
-git clone https://github.com/izaslavsky/jordan-hsa-optimization.git
-cd jordan-hsa-optimization
-```
-
-### 2. Create Virtual Environment (Recommended)
-
-**On Windows:**
-```bash
-python -m venv venv
-venv\Scripts\activate
-```
-
-**On macOS/Linux:**
-```bash
+git clone https://github.com/izaslavsky/Jordan-hsa-optimization.git
+cd Jordan-hsa-optimization
 python3 -m venv venv
 source venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 ```
 
-### 3. Install Python Dependencies
+Python 3.8 or later is supported. Python 3.10–3.12 is recommended for the geospatial stack.
+
+On Apple Silicon, install system libraries with Homebrew if binary wheels are unavailable:
 
 ```bash
-pip install --upgrade pip
-pip install -r requirements.txt
+brew install gdal geos proj libomp
 ```
 
-**Expected installation time**: 5-10 minutes depending on internet speed
+## 2. Register and authenticate Google Earth Engine
 
-### 4. Google Earth Engine Authentication (Required for Climate Notebooks)
+1. Request Earth Engine access at <https://earthengine.google.com/>.
+2. Create or select a Google Cloud project with Earth Engine enabled.
+3. Authenticate locally:
 
-Google Earth Engine (GEE) is required for all climate extraction notebooks.
-
-You must complete this step **before running**:
-- `GEE_Climate_Features_by_Facilities.ipynb`
-- `GEE_HSA_Weekly_Climate_Lagged.ipynb`
-
-Local versions of these GEE notebooks are included in this repository. They do not require Google Colab, but they **do** require Earth Engine authentication and (optionally) Google Drive OAuth if you use the automated export/download steps.
-
-#### Step 4.1 — Create a Google Earth Engine Account
-
-If you do not already have one:
-- Sign up at: https://earthengine.google.com/signup/
-- Approval is usually fast (minutes to a few days)
-
-
-
-#### Step 4.2 — Authenticate Earth Engine Locally
-
-Run:
-
-```
+```bash
 earthengine authenticate
 ```
 
-This will:
-1.	Open a browser window
-2.	Ask you to sign in to Google
-3.	Store Earth Engine credentials locally
+4. Replace the example project value in each GEE notebook with your own project ID before execution.
 
-Verify authentication:
+The public notebooks must not contain a private project credential, API key, or service-account key. A Google Cloud project identifier is not itself a secret, but using your own project avoids coupling runs to another account.
 
-```
-python - <<EOF
-import ee
-ee.Initialize()
-print("✓ Earth Engine authentication successful")
-EOF
-```
+## 3. Optional Google Drive download integration
 
-#### Step 4.3 — Project-based Initialization (Used in Notebooks)
+The HSA climate notebooks can export Earth Engine tables to Google Drive and download them through the Drive API.
 
-Notebooks initialize Earth Engine using an explicit project ID:
+1. In Google Cloud Console, enable the Google Drive API for your project.
+2. Configure an OAuth consent screen.
+3. Create an OAuth client of type **Desktop app**.
+4. Download the client configuration as `client_secrets.json` and place it in the repository root.
 
-```
-ee.Initialize(project="ee-<your-project-id>")
-```
-If authentication fails, re-run:
-
-```
-earthengine authenticate
-```
-
-**Important Notes**
-
-* Authentication is per machine (or per Colab runtime)
-* Credentials expire occasionally; re-authenticate if errors appear
-* GEE processing happens server-side; local CPU/RAM limits are not the bottleneck
-
-### 5. Google Drive API Authentication (Required for Automated Downloads)
-
-Climate extraction notebooks export large CSV files to **Google Drive**.
-To automatically:
-- detect when exports are complete
-- list files every minute
-- download results locally
-
-the notebooks use the **Google Drive API**.
-
-This requires OAuth credentials.
-
-
-
-#### Step 5.1 — Create OAuth Credentials
-
-1. Go to: https://console.cloud.google.com/
-2. Select (or create) a project
-3. Navigate to:
-   **APIs & Services → Credentials**
-4. Click **Create Credentials → OAuth Client ID**
-5. Application type: **Desktop app**
-6. Download the JSON file
-
-Rename it to:
-
-```
-client_secrets.json
-```
-
-
-#### Step 5.2 — Place Credentials File
-
-Move the file to the **root of the repository**:
-
-```
-jordan-hsa-optimization/
-├── client_secrets.json ← REQUIRED
-├── .gitignore
-├── notebooks/
+```text
+Jordan-hsa-optimization/
+├── client_secrets.json   # local only; ignored by Git
+├── data/
+├── out/
 └── ...
 ```
-The notebooks load it with:
 
-```
-CLIENT_SECRETS_PATH = "client_secrets.json"
-```
+Never commit `client_secrets.json`, OAuth tokens, service-account keys, or copied credential text. `.gitignore` already excludes the expected local credential file.
 
-#### Step 5.3 — Add to .gitignore (CRITICAL)
-Add the following line to `.gitignore:`
-```
-# Google OAuth credentials
-client_secrets.json
-```
+If Drive API integration is not desired, download completed Earth Engine exports manually and place them in the versioned `out/DRIVE_CLIMATE_*` directories documented in `DATA_FLOW_ANALYSIS.md`.
 
-⚠️ **Never commit this file.**
+## 4. Verify the public data bundle
 
-If you accidentally commit it:
-1.	Revoke the credentials in Google Cloud Console
-2.	Generate a new OAuth client
-3.	Rewrite Git history if needed
- 
-#### Step 5.4 — First-Time Login Flow
+The following command should show only `SYNMOD` patient/facility datasets plus general public or derived files:
 
-The first time you run a notebook that accesses Drive:
-* A browser window will open
-* You will be asked to approve read-only Drive access
-* Credentials are cached locally for future runs
-
-Scopes used:
-```
-https://www.googleapis.com/auth/drive.readonly
+```bash
+find data -maxdepth 2 -type f | sort
 ```
 
-### Colab Users (Alternative)
-If running in **Google Colab**, you may skip OAuth entirely and instead mount Drive:
-```
-from google.colab import drive
-drive.mount('/content/drive')
-```
-Local execution **requires OAuth**; Colab does not.
+Real patient datasets must remain outside the repository. Filenames beginning with `data/INF_` or `data/NCD_` are ignored, but privacy review should never rely on filename rules alone.
 
----
-## Running the Notebooks
-
-### Start Jupyter Notebook Server
+## 5. Start Jupyter
 
 ```bash
 jupyter notebook
 ```
 
-This will open Jupyter in your web browser at `http://localhost:8888`
+Run the GEE notebooks interactively because authentication, export submission, and Drive polling require user participation.
 
-### Notebook Execution Order
+## 6. Recommended execution order
 
-**For HSA optimization only:**
-1. Open `HSA_v6_FINAL.ipynb`
-2. Run all cells sequentially (Cell → Run All)
+### Phase 1
 
-**For complete climate-health workflow:**
-1. `HSA_v6_FINAL.ipynb` - Delineate HSA boundaries
-2. `GEE_Climate_Features_by_Facilities.ipynb` - Extract climate data by facility
-3. `GEE_HSA_Weekly_Climate_Lagged.ipynb` - Aggregate weekly climate features
-4. `Patient_Allocation_Probabilistic.ipynb` - Probabilistic population allocation (1-3 hours)
-5. `Generate_Modeling_Dataset.ipynb` - Build `{NETWORK}_{MODE}_modeling_dataset.csv`
-6. `compare_delineations.ipynb` - Optional comparison across delineation modes
-7. `run_climate_health_modeling.ipynb` - Train and evaluate models
+1. `GEE_local_Climate_Features_by_Facilities.ipynb`
+2. `HSA_FINAL.ipynb`
+3. `Population_Allocation_Probabilistic_v2.ipynb`
 
-### Expected Runtime
+The local portions of steps 2–3 can be run reproducibly with:
 
-- **HSA Optimization**: 5-15 minutes (depends on dataset size and optimization parameters)
-- **Climate Extraction (GEE)**: Highly variable — from 30 minutes to many hours. GEE server load is unpredictable; tasks may queue, time out, or need to be resubmitted. The chunked local notebook mitigates memory errors on large polygons.
-- **Population Allocation**: 1-3 hours (processes ~250,000 population pixels against all facilities using gravity model)
----
-## Data Files
-
-All necessary data files are included in the `data/` directory:
-
-### Population Raster Data
-- `data/jor_ppp_2020_UNadj.tif` - WorldPop 2020 population density (UN-adjusted, ~10.2M total)
-  - Resolution: 100m × 100m
-  - Used in HSA optimization for coverage calculations
-  - Source: WorldPop (www.worldpop.org)
-- `data/jor_ppp_2020_constrained.tif` - WorldPop 2020 population density (constrained to settlement patterns, ~7M total)
-  - Resolution: 100m × 100m
-  - Used to clip HSA circles to inhabited areas only (assigns population exclusively to detected building footprint cells; desert cells carry NoData); also used as a background layer in maps
-  - Source: WorldPop (www.worldpop.org)
-
-### Administrative Boundaries
-- `data/adm_boundaries/*.gpkg` - Governorate, district, and subdistrict boundaries
-- `data/jordan_boundary.gpkg` - National boundary
-- `data/jordan_governorates.gpkg` - Governorate boundaries (used in GOVERNORATE modes)
-
-For standalone administrative boundaries with full documentation, see the separate repository: [jordan-administrative-boundaries](https://github.com/izaslavsky/jordan-administrative-boundaries).
-
-**Viewing boundaries**: Open `.gpkg` files in QGIS or use GeoPandas:
-```python
-import geopandas as gpd
-districts = gpd.read_file('data/adm_boundaries/dis_simpl_20m.gpkg')
-districts.plot()
-```
-
-### Synthetic Patient Data and Facility Coordinates
-
-Files use `SYNINF_` prefix for infectious diseases and `SYNNCD_` prefix for non-communicable diseases. The `SYNMODINF_` and `SYNMODNCD_` datasets are additional synthetic variants designed to better approximate downstream modeling results:
-
-- `data/SYNINF_facility_coordinates.csv` - Infectious disease facilities (lat/lon)
-- `data/SYNNCD_facility_coordinates.csv` - Non-communicable disease facilities (lat/lon)
-- `data/SYNINF_patient_visits.csv` - Synthetic infectious disease visits
-- `data/SYNNCD_patient_visits.csv` - Synthetic non-communicable disease visits
-- `data/SYNINF_groups_of_diagnoses.csv` - Diagnosis code groupings for infectious diseases
-- `data/SYNNCD_groups_of_diagnoses.csv` - Diagnosis code groupings for non-communicable diseases
-
-**Privacy Note**: All patient data is 100% synthetic. No real patient information is included. `SYNMODINF` and `SYNMODNCD` are modeling-oriented synthetic datasets intended to more closely mimic modeling outputs.
-
----
-
-## Troubleshooting
-
-### Common Issues
-
-**Issue 1: "ModuleNotFoundError: No module named 'geopandas'"**
-
-**Solution**: Install geopandas and its dependencies:
 ```bash
-pip install geopandas
+python run_pipeline.py \
+  --network SYNMODINF \
+  --hsa-mode footprint \
+  --boundary-version v7 \
+  --disease-focus diarrheal \
+  --only-steps 1,2
 ```
 
-If this fails, install GDAL first (Windows users may need pre-built wheels from https://www.lfd.uci.edu/~gohlke/pythonlibs/)
+### Phase 2
 
----
+1. `GEE_local_HSA_Weekly_Climate_Lagged.ipynb`
+2. `GEE_local_HSA_Daily_Climate.ipynb`
+3. `Generate_Modeling_Dataset.ipynb`
+4. `run_climate_health_modeling.ipynb`
+5. `Generate_Daily_Modeling_Dataset.ipynb`
+6. `run_dlnm_primary_sensitivity.py`
 
-**Issue 2: "earthengine.ee_exception.EEException: Please authorize access to your Earth Engine account"**
+The local notebook stages can be run with:
 
-**Solution**: Run Earth Engine authentication:
 ```bash
-earthengine authenticate
+python run_pipeline.py \
+  --network SYNMODINF \
+  --hsa-mode footprint \
+  --boundary-version v7 \
+  --disease-focus diarrheal \
+  --study-start 2022-07-01 \
+  --study-end 2024-01-31 \
+  --week-start 2019-01-07 \
+  --week-end 2024-01-29 \
+  --ml-start-date 2022-06-27 \
+  --ml-end-date 2024-01-29 \
+  --only-steps 3,4,5
 ```
 
----
+Then run the manuscript-reported daily model:
 
-**Issue 3: Google Earth Engine tasks timeout or fail**
-
-**Solution**:
-- Check your GEE asset quota (may be full)
-- Reduce spatial or temporal extent in notebook parameters
-- Split large exports into smaller batches
-- Check Earth Engine status page: https://status.earthengine.google.com/
-
----
-
-**Issue 4: Notebook kernel dies during optimization**
-
-**Solution**:
-- Increase available RAM (close other applications)
-- Reduce dataset size in notebook parameters
-- Use a subset of patient data for testing
-
----
-
-**Issue 5: Cannot open GeoPackage files**
-
-**Solution**:
-- Install GDAL: `pip install GDAL` (or use QGIS which includes GDAL)
-- Check file path is correct (use absolute paths if relative paths fail)
-- Verify file integrity: `gpd.read_file('file.gpkg')` should not raise errors
-
----
-
-**Issue 6: Drive polling shows files but Drive UI is empty**
-
-**Explanation**:
-- Google Drive API can list files before the web UI refreshes
-- Export placeholders may exist before finalization
-- Always trust API visibility over the UI during active exports
-
-**Resolution**:
-- Wait until Earth Engine tasks are COMPLETED
-- Refresh Drive UI or recheck after several minutes
-
----
-## Verifying Installation
-
-Run this Python script to verify your environment:
-
-```python
-import sys
-print(f"Python version: {sys.version}")
-
-# Check core packages
-import numpy
-import pandas
-import geopandas
-import matplotlib
-import earthengine
-
-print(f"NumPy: {numpy.__version__}")
-print(f"Pandas: {pandas.__version__}")
-print(f"GeoPandas: {geopandas.__version__}")
-print(f"Matplotlib: {matplotlib.__version__}")
-print(f"Earth Engine: {earthengine.__version__}")
-
-# Test data loading
-districts = geopandas.read_file('data/adm_boundaries/dis_simpl_20m.gpkg')
-print(f"\nSuccessfully loaded {len(districts)} districts")
-
-print("\n✅ Environment setup complete!")
+```bash
+python run_dlnm_primary_sensitivity.py
 ```
 
-Expected output should show no errors and display package versions.
+See `README.md` and `DATA_FLOW_ANALYSIS.md` for inputs and outputs.
 
----
+## 7. Common checks
 
-## Performance Notes
+Confirm package imports:
 
-### Memory Requirements
-- **HSA Optimization**: 4-8 GB RAM recommended
-- **Climate Extraction**: 8-16 GB RAM recommended (GEE handles heavy processing server-side)
+```bash
+python -c "import geopandas, rasterio, sklearn, statsmodels; print('imports OK')"
+```
 
-### Disk Space
-- **Repository**: ~50 MB
-- **Generated outputs**: 100 MB - 5 GB (depends on number of climate variables and spatial resolution)
+Confirm Earth Engine authentication:
 
-### CPU Usage
-- HSA optimization is CPU-intensive (benefits from multi-core processors)
-- Climate extraction relies on Google Earth Engine servers (local CPU not critical)
+```bash
+earthengine asset list --project YOUR_PROJECT_ID
+```
 
-## Next Steps
+Confirm that the daily DLNM input exists before running the final model:
 
-After successful setup:
-1. Read through `HSA_v6_FINAL.ipynb` to understand the optimization workflow
-2. Modify parameters in the notebook to test different scenarios
-3. Run climate extraction notebooks if you have access to Google Earth Engine
-4. Refer to the main `README.md` for methodology details and citation information
+```bash
+test -f out/modeling/SYNMODINF_footprint_daily_modeling_dataset_v7.csv
+```
 
-## Getting Help
+## 8. Output and release hygiene
 
-If you encounter issues not covered here:
-- **Check documentation**: Read notebook markdown cells for parameter descriptions
-- **GitHub Issues**: [Open an issue](https://github.com/izaslavsky/jordan-hsa-optimization/issues)
-- **Email**: [Contact information]
-
----
-
-**Last Updated**: March 2026
+- Generated files belong under `out/`; only `out/.gitkeep` is committed.
+- Executed notebook copies belong under `_pipeline_runs/`; the directory is ignored.
+- Clear notebook outputs before committing so local paths, transient results, and authentication messages are not published.
+- Review `git status --ignored` before every public release.

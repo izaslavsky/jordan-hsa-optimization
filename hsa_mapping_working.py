@@ -11,7 +11,6 @@ Usage:
 
     create_all_hsa_maps(all_results, network='INF', data_dir=DATA_DIR, out_dir=OUT_DIR)
 
-Author: Claude Code
 Date: 2025-11-29
 """
 
@@ -244,7 +243,8 @@ def create_all_hsa_maps(
     network='INF',
     data_dir=None,
     out_dir=None,
-    target_crs='EPSG:4326'
+    target_crs='EPSG:4326',
+    algo_version='v7',
 ):
     """
     Create maps for all optimization modes.
@@ -299,12 +299,16 @@ def create_all_hsa_maps(
     if fac_gpkg.exists():
         all_facilities = gpd.read_file(fac_gpkg)
     else:
-        # Fallback to climate features CSV (or facility coordinates) if GPKG is missing
-        climate_csv = data_dir / f'{network}_Facilities_Climate_Features_with_clusters.csv'
-        # Try SYN-prefixed files first (synthetic data)
-        coords_csv = data_dir / f'SYN{network}_facility_coordinates.csv'
-        if not coords_csv.exists():
-            coords_csv = data_dir / f'{network}_facility_coordinates.csv'
+        # Fallback to climate features CSV (or facility coordinates) if GPKG is missing.
+        # Climate CSV is written to out_dir by GEE_local_Climate_Features_by_Facilities.ipynb.
+        climate_csv = out_dir / f'{network}_Facilities_Climate_Features_with_clusters.csv'
+        if not climate_csv.exists():
+            climate_csv = data_dir / f'{network}_Facilities_Climate_Features_with_clusters.csv'
+        # Try SYNMOD-prefixed coords first (synthetic data), then real, then legacy SYN prefix
+        for _prefix in (f'SYNMOD{network}', f'SYN{network}', network):
+            coords_csv = data_dir / f'{_prefix}_facility_coordinates.csv'
+            if coords_csv.exists():
+                break
         if climate_csv.exists():
             fac_df = pd.read_csv(climate_csv)
             if 'FacilityName' in fac_df.columns:
@@ -349,7 +353,7 @@ def create_all_hsa_maps(
         facilities_hsa = all_results[mode_key]['facilities']
 
         # Load population-clipped HSA polygons from saved GeoJSON if available
-        geojson_path = out_dir / f'{network}_{mode_key}_hsas_v2.geojson'
+        geojson_path = out_dir / f'{network}_{mode_key}_hsas_{algo_version}.geojson'
         if geojson_path.exists():
             hsa_polygons = gpd.read_file(geojson_path)
             print(f"  Using population-clipped polygons from {geojson_path.name}")
@@ -358,7 +362,7 @@ def create_all_hsa_maps(
             print(f"  GeoJSON not found ({geojson_path.name}), falling back to circles")
 
         # Create output path
-        output_path = out_dir / f'{network}_{mode_key}_map_WORKING.png'
+        output_path = out_dir / f'{network}_{mode_key}_map_{algo_version}.png'
 
         # Create map
         fig = create_hsa_map(
@@ -391,6 +395,7 @@ def save_hsa_geopackages(
     data_dir=None,
     out_dir=None,
     target_crs='EPSG:4326',
+    algo_version='v7',
 ):
     """
     Save one GeoPackage per optimization mode containing all map layers.
@@ -449,10 +454,13 @@ def save_hsa_geopackages(
     if fac_gpkg.exists():
         all_facilities = gpd.read_file(fac_gpkg).to_crs(target_crs)
     else:
-        climate_csv = data_dir / f'{network}_Facilities_Climate_Features_with_clusters.csv'
-        coords_csv = data_dir / f'SYN{network}_facility_coordinates.csv'
-        if not coords_csv.exists():
-            coords_csv = data_dir / f'{network}_facility_coordinates.csv'
+        climate_csv = out_dir / f'{network}_Facilities_Climate_Features_with_clusters.csv'
+        if not climate_csv.exists():
+            climate_csv = data_dir / f'{network}_Facilities_Climate_Features_with_clusters.csv'
+        for _prefix in (f'SYNMOD{network}', f'SYN{network}', network):
+            coords_csv = data_dir / f'{_prefix}_facility_coordinates.csv'
+            if coords_csv.exists():
+                break
         if climate_csv.exists():
             fac_df = pd.read_csv(climate_csv)
             if 'FacilityName' in fac_df.columns:
@@ -486,7 +494,7 @@ def save_hsa_geopackages(
             print(f"Skipping {mode_key} — not in results")
             continue
 
-        gpkg_path = out_dir / f'{network}_{mode_key}_map.gpkg'
+        gpkg_path = out_dir / f'{network}_{mode_key}_map_{algo_version}.gpkg'
         print(f"\nSaving GeoPackage: {gpkg_path.name}")
 
         facilities_hsa = all_results[mode_key]['facilities'].copy()
@@ -496,7 +504,7 @@ def save_hsa_geopackages(
         circles_gdf = create_hsa_circles_clipped(facilities_hsa, country_polygon)
 
         # --- hsa_boundaries: population-clipped polygons from saved GeoJSON ---
-        geojson_path = out_dir / f'{network}_{mode_key}_hsas_v2.geojson'
+        geojson_path = out_dir / f'{network}_{mode_key}_hsas_{algo_version}.geojson'
         if geojson_path.exists():
             hsa_boundaries = gpd.read_file(geojson_path).to_crs(target_crs)
             print(f"  hsa_boundaries: population-clipped ({geojson_path.name})")

@@ -29,11 +29,13 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import warnings
 import argparse
+import os
 from pathlib import Path
 import json
 from scipy import stats
 
 warnings.filterwarnings('ignore')
+DEFAULT_PIPELINE_OUT_DIR = os.environ.get("HSA_OUT_DIR", os.environ.get("PIPELINE_OUT_DIR", "out"))
 OUTPUT_FILE_PREFIX = ""
 TEXT_RESULTS_DIR = None
 
@@ -60,9 +62,9 @@ REFERENCE_ELEVATION_M = 800  # Approximate mean elevation
 REFERENCE_TEMP_C = 18  # Approximate mean annual temperature
 
 
-def load_allocation_data(out_dir, network, hsa_mode, sample_size=500000):
+def load_allocation_data(out_dir, network, hsa_mode, sample_size=500000, boundary_version="v7"):
     """Load pixel allocation data with coordinates."""
-    alloc_file = out_dir / f'pixel_allocations_{network}_{hsa_mode}.csv'
+    alloc_file = out_dir / f'pixel_allocations_{network}_{hsa_mode}_{boundary_version}.csv'
 
     if not alloc_file.exists():
         print(f"  Allocation file not found: {alloc_file}")
@@ -472,14 +474,15 @@ def generate_report(within_stats, between_stats, decomposition, comparison_stats
 
 def main():
     parser = argparse.ArgumentParser(description='Within-HSA Climate Heterogeneity Analysis')
-    parser.add_argument('--network', default='INF',
-                        help='Network label, e.g. INF, NCD, SYNINF, SYNNCD, SYNMODINF, SYNMODNCD')
+    parser.add_argument('--network', default='INF', )
     parser.add_argument('--hsa-mode', default='footprint')
     parser.add_argument('--data-dir', default='data')
-    parser.add_argument('--out-dir', default='out')
-    parser.add_argument('--output-dir', default='out/analysis_climate_heterogeneity')
-    parser.add_argument('--text-output-dir', default='out/textresults')
+    parser.add_argument('--out-dir', default=DEFAULT_PIPELINE_OUT_DIR)
+    parser.add_argument('--output-dir', default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / 'analysis_climate_heterogeneity'))
+    parser.add_argument('--text-output-dir', default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / 'textresults'))
     parser.add_argument('--sample-size', type=int, default=500000)
+    parser.add_argument('--boundary-version', default=os.environ.get("BOUNDARY_VERSION", os.environ.get("PIPELINE_VERSION", "v7")),
+                        help="HSA boundary version (v6, v7, v8). Must match the run that produced allocation files.")
 
     args = parser.parse_args()
 
@@ -498,7 +501,7 @@ def main():
     print("=" * 70)
 
     # Load allocation data
-    allocations = load_allocation_data(out_dir, args.network, args.hsa_mode, args.sample_size)
+    allocations = load_allocation_data(out_dir, args.network, args.hsa_mode, args.sample_size, boundary_version=args.boundary_version)
 
     if allocations is None:
         print("Error: Could not load allocation data")

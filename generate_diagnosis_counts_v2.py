@@ -15,7 +15,6 @@ Logic:
 Usage:
     python generate_diagnosis_counts_v2.py
 
-Author: Claude Code
 Date: 2025-12-07
 """
 
@@ -23,13 +22,14 @@ import pandas as pd
 from pathlib import Path
 import sys
 import argparse
+import os
 from datetime import datetime
 from difflib import get_close_matches
 
 # Directories
 DATA_DIR = Path('data')
-OUT_DIR = Path('out')
-OUT_DIR.mkdir(parents=True, exist_ok=True)
+DEFAULT_OUT_DIR = os.environ.get("HSA_OUT_DIR", os.environ.get("PIPELINE_OUT_DIR", "out"))
+OUT_DIR = Path(DEFAULT_OUT_DIR)
 
 # Parameters
 DUPLICATE_WINDOW_DAYS = 3
@@ -72,9 +72,22 @@ def standardize_facility_name(name: str) -> str:
     return name
 
 
+def _resolve_data_file(network: str, suffix: str) -> Path:
+    """Return data/NETWORK_suffix, falling back to data/SYNMODNETWORK_suffix."""
+    real = DATA_DIR / f'{network}_{suffix}'
+    if real.exists():
+        return real
+    synmod = DATA_DIR / f'SYNMOD{network}_{suffix}'
+    if synmod.exists():
+        return synmod
+    raise FileNotFoundError(
+        f"Data file not found as '{real.name}' or '{synmod.name}' in {DATA_DIR}"
+    )
+
+
 def load_authoritative_facilities(network: str) -> pd.DataFrame:
     """Load authoritative facility coordinates."""
-    auth_file = DATA_DIR / f'{network}_facility_coordinates.csv'
+    auth_file = _resolve_data_file(network, 'facility_coordinates.csv')
 
     if not auth_file.exists():
         raise FileNotFoundError(f"Authoritative file not found: {auth_file}")
@@ -96,7 +109,7 @@ def load_authoritative_facilities(network: str) -> pd.DataFrame:
 
 def load_diagnosis_groups(network: str) -> dict:
     """Load diagnosis group mappings."""
-    group_file = DATA_DIR / f'{network}_groups_of_diagnoses.csv'
+    group_file = _resolve_data_file(network, 'groups_of_diagnoses.csv')
 
     if not group_file.exists():
         raise FileNotFoundError(f"Diagnosis groups file not found: {group_file}")
@@ -123,7 +136,7 @@ def load_diagnosis_groups(network: str) -> dict:
 
 def load_patient_data(network: str) -> pd.DataFrame:
     """Load patient visit data."""
-    patient_file = DATA_DIR / f'{network}_patient_visits.csv'
+    patient_file = _resolve_data_file(network, 'patient_visits.csv')
 
     if not patient_file.exists():
         raise FileNotFoundError(f"Patient data not found: {patient_file}")
@@ -332,14 +345,10 @@ def create_diagnosis_tables(
     total_counts = total_counts[['healthfacility', 'healthfacilitytype', 'governorate', 'total_diagnoses', 'Latitude', 'Longitude']]
     total_counts = total_counts.sort_values('total_diagnoses', ascending=False)
 
-    # Save canonical generic output plus mode-specific compatibility copy.
-    total_file = OUT_DIR / f'{network}_diagnosis_counts_total.csv'
+    # Save
+    total_file = OUT_DIR / f'{network}_{hsa_mode}_diagnosis_counts_total.csv'
     total_counts.to_csv(total_file, index=False)
     print(f"  [OK] Saved: {total_file.name} ({len(total_counts)} facilities)")
-    total_mode_file = OUT_DIR / f'{network}_{hsa_mode}_diagnosis_counts_total.csv'
-    if total_mode_file != total_file:
-        total_counts.to_csv(total_mode_file, index=False)
-        print(f"  [OK] Saved compatibility copy: {total_mode_file.name}")
 
     # Table 2: By diagnosis group
     group_counts = df_filtered.groupby(['healthfacility', 'governorate', 'diagnosis_group']).size().reset_index(name='diagnosis_count')
@@ -355,14 +364,10 @@ def create_diagnosis_tables(
     group_counts = group_counts[['healthfacility', 'healthfacilitytype', 'governorate', 'diagnosis_group', 'diagnosis_count', 'Latitude', 'Longitude']]
     group_counts = group_counts.sort_values(['healthfacility', 'diagnosis_count'], ascending=[True, False])
 
-    # Save canonical generic output plus mode-specific compatibility copy.
-    group_file = OUT_DIR / f'{network}_diagnosis_counts_by_group.csv'
+    # Save
+    group_file = OUT_DIR / f'{network}_{hsa_mode}_diagnosis_counts_by_group.csv'
     group_counts.to_csv(group_file, index=False)
     print(f"  [OK] Saved: {group_file.name} ({len(group_counts)} rows)")
-    group_mode_file = OUT_DIR / f'{network}_{hsa_mode}_diagnosis_counts_by_group.csv'
-    if group_mode_file != group_file:
-        group_counts.to_csv(group_mode_file, index=False)
-        print(f"  [OK] Saved compatibility copy: {group_mode_file.name}")
 
     # Table 3: Pivot table
     pivot = df_filtered.pivot_table(
@@ -390,14 +395,10 @@ def create_diagnosis_tables(
     pivot = pivot[first_cols + sorted(other_cols)]
     pivot = pivot.sort_values('total_diagnoses', ascending=False)
 
-    # Save canonical generic output plus mode-specific compatibility copy.
-    pivot_file = OUT_DIR / f'{network}_diagnosis_counts_pivot.csv'
+    # Save
+    pivot_file = OUT_DIR / f'{network}_{hsa_mode}_diagnosis_counts_pivot.csv'
     pivot.to_csv(pivot_file, index=False)
     print(f"  [OK] Saved: {pivot_file.name} ({len(pivot)} facilities)")
-    pivot_mode_file = OUT_DIR / f'{network}_{hsa_mode}_diagnosis_counts_pivot.csv'
-    if pivot_mode_file != pivot_file:
-        pivot.to_csv(pivot_mode_file, index=False)
-        print(f"  [OK] Saved compatibility copy: {pivot_mode_file.name}")
 
     return total_counts, group_counts, pivot
 
@@ -454,10 +455,14 @@ def generate_discrepancy_report(discrepancies_by_network: dict) -> str:
 
 def main():
     """Main execution function."""
+    global OUT_DIR
     parser = argparse.ArgumentParser(description="Generate diagnosis counts from authoritative facilities (v2)")
     parser.add_argument("--networks", default="INF,NCD")
     parser.add_argument("--hsa-mode", default="footprint")
+    parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR)
     args = parser.parse_args()
+    OUT_DIR = Path(args.out_dir)
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
     networks = [n.strip().upper() for n in args.networks.split(',') if n.strip()]
 
     print("=" * 80)
@@ -513,13 +518,9 @@ def main():
 
         print(f"\nOutput files:")
         for network in networks:
-            print(f"  - {network}_diagnosis_counts_total.csv")
-            print(f"  - {network}_diagnosis_counts_by_group.csv")
-            print(f"  - {network}_diagnosis_counts_pivot.csv")
-            if args.hsa_mode:
-                print(f"  - {network}_{args.hsa_mode}_diagnosis_counts_total.csv")
-                print(f"  - {network}_{args.hsa_mode}_diagnosis_counts_by_group.csv")
-                print(f"  - {network}_{args.hsa_mode}_diagnosis_counts_pivot.csv")
+            print(f"  - {network}_{args.hsa_mode}_diagnosis_counts_total.csv")
+            print(f"  - {network}_{args.hsa_mode}_diagnosis_counts_by_group.csv")
+            print(f"  - {network}_{args.hsa_mode}_diagnosis_counts_pivot.csv")
         print(f"  - {report_prefix}_patient_data_discrepancies.txt")
 
         return 0

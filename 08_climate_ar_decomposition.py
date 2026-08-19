@@ -25,11 +25,12 @@ from sklearn.preprocessing import StandardScaler
 from scipy import stats
 import warnings
 import argparse
+import os
 from pathlib import Path
 import json
-from network_utils import default_target_col
 
 warnings.filterwarnings('ignore')
+DEFAULT_PIPELINE_OUT_DIR = os.environ.get("HSA_OUT_DIR", os.environ.get("PIPELINE_OUT_DIR", "out"))
 OUTPUT_FILE_PREFIX = ""
 TEXT_RESULTS_DIR = None
 
@@ -638,22 +639,21 @@ def create_supplement_table(results_df, decomposition, output_dir):
 
 def main():
     parser = argparse.ArgumentParser(description='Variance Decomposition Analysis')
-    parser.add_argument('--network', default='INF',
-                        help='Network label, e.g. INF, NCD, SYNINF, SYNNCD, SYNMODINF, SYNMODNCD')
+    parser.add_argument('--network', default='INF', )
     parser.add_argument('--hsa-mode', default='footprint')
     parser.add_argument('--input-csv', default=None, help='Path to modeling dataset')
-    parser.add_argument('--output-dir', default='out/analysis_variance_decomposition')
-    parser.add_argument('--text-output-dir', default='out/textresults')
+    parser.add_argument('--output-dir', default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / 'analysis_variance_decomposition'))
+    parser.add_argument('--text-output-dir', default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / 'textresults'))
     parser.add_argument('--target-col', default=None, help='Target column name')
 
     args = parser.parse_args()
 
     # Set defaults based on network
     if args.target_col is None:
-        args.target_col = default_target_col(args.network)
+        args.target_col = 'diarrheal_count_adjusted' if args.network == 'INF' else 'hypertension_count_adjusted'
 
     if args.input_csv is None:
-        args.input_csv = f'out/modeling/{args.network}_{args.hsa_mode}_modeling_dataset.csv'
+        args.input_csv = str(Path(DEFAULT_PIPELINE_OUT_DIR) / 'modeling' / f'{args.network}_{args.hsa_mode}_modeling_dataset.csv')
 
     global OUTPUT_FILE_PREFIX, TEXT_RESULTS_DIR
     OUTPUT_FILE_PREFIX = f"{args.network}_{args.hsa_mode}"

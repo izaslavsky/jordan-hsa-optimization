@@ -1,0 +1,8 @@
+event,start_date,end_date,note
+ramadan,2022-04-02,2022-05-01,Ramadan 2022 - reduced health-seeking during fasting month
+ramadan,2023-03-22,2023-04-20,Ramadan 2023
+ramadan,2024-03-10,2024-04-08,Ramadan 2024
+eid_fitr,2022-05-02,2022-05-04,Eid al-Fitr 2022 - first 3 days after Ramadan end
+eid_fitr,2023-04-21,2023-04-23,Eid al-Fitr 2023
+eid_adha,2022-07-09,2022-07-10,Eid al-Adha 2022 - 1-2 day drop observed in raw data
+eid_adha,2023-06-27,2023-06-28,Eid al-Adha 2023

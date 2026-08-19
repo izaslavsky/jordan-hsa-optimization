@@ -14,6 +14,7 @@ we should see stronger climate signals in:
 import pandas as pd
 import numpy as np
 import argparse
+import os
 from pathlib import Path
 import json
 import warnings
@@ -24,6 +25,7 @@ from sklearn.metrics import r2_score, mean_squared_error
 import matplotlib.pyplot as plt
 
 warnings.filterwarnings('ignore')
+DEFAULT_PIPELINE_OUT_DIR = os.environ.get("HSA_OUT_DIR", os.environ.get("PIPELINE_OUT_DIR", "out"))
 OUTPUT_FILE_PREFIX = ""
 TEXT_RESULTS_DIR = None
 
@@ -39,8 +41,9 @@ def md_path(filename: str) -> Path:
 BASE_DIR = Path(__file__).resolve().parent
 NETWORK = "INF"
 HSA_MODE = "footprint"
+BOUNDARY_VERSION = os.environ.get("BOUNDARY_VERSION", os.environ.get("PIPELINE_VERSION", "v7"))
 DATA_DIR = BASE_DIR / "data"
-OUT_DIR = BASE_DIR / "out"
+OUT_DIR = Path(os.environ.get("HSA_OUT_DIR", os.environ.get("PIPELINE_OUT_DIR", "out")))
 CLIMATE_DIR = OUT_DIR / "DRIVE_CLIMATE_BY_HSA_DOWNLOAD" / "FINAL_HSA_CLIMATE"
 ANALYSIS_DIR = OUT_DIR / "analysis_climate_exclusion"
 
@@ -57,9 +60,9 @@ def load_hsa_data() -> pd.DataFrame:
 
     # Load HSA weekly disease data
     candidates = [
-        OUT_DIR / f"{NETWORK}_{HSA_MODE}_weekly_infectious_adjusted.csv",
-        OUT_DIR / f"{NETWORK}_{HSA_MODE}_weekly_ncd_adjusted.csv",
-        OUT_DIR / f"{NETWORK}_{HSA_MODE}_weekly_hypertension_adjusted.csv",
+        OUT_DIR / f"{NETWORK}_{HSA_MODE}_weekly_infectious_adjusted_{BOUNDARY_VERSION}.csv",
+        OUT_DIR / f"{NETWORK}_{HSA_MODE}_weekly_ncd_adjusted_{BOUNDARY_VERSION}.csv",
+        OUT_DIR / f"{NETWORK}_{HSA_MODE}_weekly_hypertension_adjusted_{BOUNDARY_VERSION}.csv",
     ]
     hsa_weekly_path = next((p for p in candidates if p.exists()), None)
     if hsa_weekly_path is None:
@@ -155,7 +158,7 @@ def load_allocation_characteristics() -> pd.DataFrame:
 
     print("\nLoading allocation characteristics...")
 
-    alloc_path = OUT_DIR / f"pixel_allocations_{NETWORK}_{HSA_MODE}.csv"
+    alloc_path = OUT_DIR / f"pixel_allocations_{NETWORK}_{HSA_MODE}_{BOUNDARY_VERSION}.csv"
     df = pd.read_csv(alloc_path)
 
     # Aggregate by facility
@@ -739,19 +742,21 @@ def generate_report(results: Dict, output_path: Path):
 def main():
     """Main analysis function."""
     parser = argparse.ArgumentParser(description="Phase 1B: Climate Effects in Excluded Zones")
-    parser.add_argument("--network", default="INF",
-                        help='Network label, e.g. INF, NCD, SYNINF, SYNNCD, SYNMODINF, SYNMODNCD')
+    parser.add_argument("--network", default="INF", )
     parser.add_argument("--hsa-mode", default="footprint")
     parser.add_argument("--data-dir", default="data")
-    parser.add_argument("--out-dir", default="out")
+    parser.add_argument("--out-dir", default=DEFAULT_PIPELINE_OUT_DIR)
     parser.add_argument("--climate-dir", default=None)
-    parser.add_argument("--output-dir", default="out/analysis_climate_exclusion")
-    parser.add_argument("--text-output-dir", default="out/textresults")
+    parser.add_argument("--output-dir", default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / "analysis_climate_exclusion"))
+    parser.add_argument("--text-output-dir", default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / "textresults"))
+    parser.add_argument("--boundary-version", default=os.environ.get("BOUNDARY_VERSION", os.environ.get("PIPELINE_VERSION", "v7")),
+                        help="HSA boundary version (v6, v7, v8). Must match the run that produced allocation files.")
     args = parser.parse_args()
 
-    global NETWORK, HSA_MODE, DATA_DIR, OUT_DIR, CLIMATE_DIR, ANALYSIS_DIR, OUTPUT_FILE_PREFIX, TEXT_RESULTS_DIR
+    global NETWORK, HSA_MODE, DATA_DIR, OUT_DIR, CLIMATE_DIR, ANALYSIS_DIR, OUTPUT_FILE_PREFIX, TEXT_RESULTS_DIR, BOUNDARY_VERSION
     NETWORK = args.network
     HSA_MODE = args.hsa_mode
+    BOUNDARY_VERSION = args.boundary_version
     DATA_DIR = Path(args.data_dir)
     OUT_DIR = Path(args.out_dir)
     CLIMATE_DIR = Path(args.climate_dir) if args.climate_dir else (OUT_DIR / "DRIVE_CLIMATE_BY_HSA_DOWNLOAD" / "FINAL_HSA_CLIMATE")

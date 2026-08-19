@@ -36,6 +36,7 @@ except Exception as e:
 warnings.filterwarnings('ignore')
 
 # Configuration defaults
+DEFAULT_PIPELINE_OUT_DIR = os.environ.get("HSA_OUT_DIR", os.environ.get("PIPELINE_OUT_DIR", "out"))
 DEFAULT_RANDOM_SEED = 42
 
 parser = argparse.ArgumentParser(description="Comprehensive climate-health modeling")
@@ -43,7 +44,7 @@ parser.add_argument("--network", default=os.environ.get("NETWORK", "INF"))
 parser.add_argument("--hsa-mode", default=os.environ.get("HSA_MODE", "footprint"))
 parser.add_argument("--target-col", default=os.environ.get("TARGET_COL", "diarrheal_count_adjusted"))
 parser.add_argument("--input-csv", default=os.environ.get("MODEL_INPUT_CSV", None))
-parser.add_argument("--output-dir", default=os.environ.get("MODEL_OUTPUT_DIR", "out/modeling/results_comprehensive"))
+parser.add_argument("--output-dir", default=os.environ.get("MODEL_OUTPUT_DIR", str(Path(DEFAULT_PIPELINE_OUT_DIR) / "modeling" / "results_comprehensive")))
 parser.add_argument("--output-prefix", default=os.environ.get("MODEL_OUTPUT_PREFIX", None))
 parser.add_argument("--random-seed", type=int, default=int(os.environ.get("RANDOM_SEED", DEFAULT_RANDOM_SEED)),
                     help=f"Random seed for reproducibility (default: {DEFAULT_RANDOM_SEED})")
@@ -51,7 +52,7 @@ args = parser.parse_args()
 NETWORK = args.network
 HSA_MODE = args.hsa_mode
 TARGET_COL = args.target_col
-INPUT_CSV = args.input_csv or f"out/modeling/{NETWORK}_{HSA_MODE}_modeling_dataset.csv"
+INPUT_CSV = args.input_csv or str(Path(DEFAULT_PIPELINE_OUT_DIR) / "modeling" / f"{NETWORK}_{HSA_MODE}_modeling_dataset.csv")
 OUTPUT_DIR = Path(args.output_dir)
 OUTPUT_PREFIX = args.output_prefix or f"{NETWORK}_{HSA_MODE}"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

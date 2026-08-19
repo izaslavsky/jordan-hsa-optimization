@@ -2634,6 +2634,408 @@ print("Governorate optimization methods added to HSAOptimizer class (tau_coverag
 
 
 # ============ Cell 20 ============
+def upgrade_selected_anchors_to_stronger_facilities(
+    selected_facilities,
+    all_facilities,
+    search_radius_multiplier=1.0,
+    min_volume_ratio=2.0,
+    min_absolute_volume_gain=100.0,
+    require_same_governorate=True,
+):
+    """
+    Replace weak selected anchors with stronger nearby facilities in the same
+    local service area.
+
+    This catches cases where a greedy coverage/diversity objective picked a
+    small facility even though a larger hospital inside the same catchment is a
+    more defensible HSA anchor. The original selected anchor remains a normal
+    facility and will be assigned back into the upgraded HSA during patient
+    allocation.
+    """
+    if selected_facilities is None or len(selected_facilities) == 0:
+        return selected_facilities, pd.DataFrame()
+
+    selected = selected_facilities.copy().reset_index(drop=True)
+    facilities = all_facilities.copy()
+
+    if facilities.crs != selected.crs:
+        facilities = facilities.to_crs(selected.crs)
+    metric_crs = 'EPSG:32637'
+    selected_metric = selected.to_crs(metric_crs)
+    facilities_metric = facilities.to_crs(metric_crs)
+
+    def _name_col(gdf):
+        if 'HealthFacility' in gdf.columns:
+            return 'HealthFacility'
+        if 'FacilityName' in gdf.columns:
+            return 'FacilityName'
+        raise ValueError("GeoDataFrame must include HealthFacility or FacilityName")
+
+    selected_name_col = _name_col(selected)
+    facility_name_col = _name_col(facilities)
+    for meta_col, default_value in (
+        ('upgraded_anchor', False),
+        ('replaced_anchor', ''),
+        ('anchor_upgrade_reason', ''),
+    ):
+        if meta_col not in selected.columns:
+            selected[meta_col] = default_value
+
+    def _facility_type_rank(value):
+        s = str(value).lower() if pd.notna(value) else ''
+        if 'hospital' in s:
+            return 3
+        if 'comprehensive' in s or 'compreahnsive' in s or 'comprehansive' in s:
+            return 2
+        if 'primary' in s:
+            return 1
+        return 0
+
+    def _get_type(row):
+        for col in ('healthfacilitytype', 'facility_type', 'FacilityType', 'type'):
+            if col in row and pd.notna(row.get(col)):
+                return str(row.get(col)).strip()
+        return ''
+
+    def _get_volume(row):
+        for col in ('Total', 'total_diagnoses', 'patient_volume', 'volume'):
+            if col in row and pd.notna(row.get(col)):
+                value = pd.to_numeric(row.get(col), errors='coerce')
+                if pd.notna(value):
+                    return float(value)
+        return 0.0
+
+    def _get_governorate(row):
+        if 'governorate' in row and pd.notna(row.get('governorate')):
+            return str(row.get('governorate')).strip()
+        return ''
+
+    selected_names = set(selected[selected_name_col].astype(str).str.strip())
+    audit_rows = []
+
+    for idx, anchor in selected.iterrows():
+        anchor_name = str(anchor[selected_name_col]).strip()
+        anchor_type = _get_type(anchor)
+        anchor_rank = _facility_type_rank(anchor_type)
+        anchor_volume = _get_volume(anchor)
+        anchor_governorate = _get_governorate(anchor)
+        radius_km = pd.to_numeric(anchor.get('service_radius_km'), errors='coerce')
+        if pd.isna(radius_km) or radius_km <= 0:
+            radius_km = pd.to_numeric(anchor.get('initial_radius_km'), errors='coerce')
+        if pd.isna(radius_km) or radius_km <= 0:
+            radius_km = RURAL_BASE_RADIUS_KM
+
+        anchor_geom_metric = selected_metric.geometry.iloc[idx]
+        distances_km = facilities_metric.geometry.distance(anchor_geom_metric) / 1000.0
+        candidate_mask = distances_km <= (float(radius_km) * search_radius_multiplier)
+        candidate_mask &= facilities[facility_name_col].astype(str).str.strip() != anchor_name
+        candidate_mask &= ~facilities[facility_name_col].astype(str).str.strip().isin(selected_names)
+
+        candidates = []
+        for cand_idx, cand in facilities[candidate_mask].iterrows():
+            cand_name = str(cand[facility_name_col]).strip()
+            cand_type = _get_type(cand)
+            cand_rank = _facility_type_rank(cand_type)
+            cand_volume = _get_volume(cand)
+            cand_governorate = _get_governorate(cand)
+            same_governorate = (
+                bool(anchor_governorate)
+                and bool(cand_governorate)
+                and anchor_governorate.lower() == cand_governorate.lower()
+            )
+            if require_same_governorate and anchor_governorate and cand_governorate and not same_governorate:
+                continue
+
+            volume_gain = cand_volume - anchor_volume
+            volume_ratio = (cand_volume / anchor_volume) if anchor_volume > 0 else np.inf
+            stronger_type = cand_rank > anchor_rank
+            much_larger = volume_ratio >= min_volume_ratio
+            enough_gain = volume_gain >= min_absolute_volume_gain
+
+            if cand_volume > anchor_volume and enough_gain and (stronger_type or much_larger):
+                # Prefer higher type, then larger volume ratio/gain, then proximity.
+                score = (
+                    cand_rank * 1_000_000
+                    + min(volume_ratio, 100.0) * 10_000
+                    + volume_gain
+                    - distances_km.loc[cand_idx]
+                )
+                candidates.append((score, cand_idx, cand_name, cand_type, cand_rank,
+                                   cand_volume, float(distances_km.loc[cand_idx]),
+                                   same_governorate, volume_ratio, volume_gain))
+
+        if not candidates:
+            audit_rows.append({
+                'original_anchor': anchor_name,
+                'replacement_anchor': '',
+                'upgraded': False,
+                'reason': 'no stronger nearby candidate',
+                'original_type': anchor_type,
+                'replacement_type': '',
+                'original_volume': anchor_volume,
+                'replacement_volume': np.nan,
+                'distance_km': np.nan,
+                'same_governorate': np.nan,
+            })
+            continue
+
+        candidates.sort(key=lambda x: x[0], reverse=True)
+        _, cand_idx, cand_name, cand_type, _, cand_volume, cand_dist, same_gov, volume_ratio, volume_gain = candidates[0]
+        replacement = facilities.loc[cand_idx].copy()
+
+        for col in selected.columns:
+            if col not in replacement.index and col != selected.geometry.name:
+                replacement[col] = np.nan
+
+        # Preserve the HSA radius and optimization metadata from the selected
+        # anchor; only the anchor identity/location is upgraded.
+        replacement['service_radius_km'] = radius_km
+        if 'initial_radius_km' in selected.columns:
+            replacement['initial_radius_km'] = anchor.get('initial_radius_km', radius_km)
+        if selected_name_col not in replacement.index and facility_name_col in replacement.index:
+            replacement[selected_name_col] = replacement[facility_name_col]
+        if 'FacilityName' in selected.columns and 'FacilityName' not in replacement.index:
+            replacement['FacilityName'] = replacement[selected_name_col]
+        if 'HealthFacility' in selected.columns and 'HealthFacility' not in replacement.index:
+            replacement['HealthFacility'] = replacement[selected_name_col]
+
+        replacement['upgraded_anchor'] = True
+        replacement['replaced_anchor'] = anchor_name
+        replacement['anchor_upgrade_reason'] = 'stronger_nearby_facility'
+        selected.loc[idx, :] = replacement[selected.columns]
+
+        selected_names.discard(anchor_name)
+        selected_names.add(cand_name)
+
+        audit_rows.append({
+            'original_anchor': anchor_name,
+            'replacement_anchor': cand_name,
+            'upgraded': True,
+            'reason': 'stronger nearby facility',
+            'original_type': anchor_type,
+            'replacement_type': cand_type,
+            'original_volume': anchor_volume,
+            'replacement_volume': cand_volume,
+            'volume_ratio': volume_ratio,
+            'volume_gain': volume_gain,
+            'distance_km': cand_dist,
+            'same_governorate': same_gov,
+        })
+
+    selected['upgraded_anchor'] = selected['upgraded_anchor'].fillna(False).astype(bool)
+    selected['replaced_anchor'] = selected['replaced_anchor'].fillna('')
+    selected['anchor_upgrade_reason'] = selected['anchor_upgrade_reason'].fillna('')
+
+    audit_columns = [
+        'original_anchor',
+        'replacement_anchor',
+        'upgraded',
+        'reason',
+        'original_type',
+        'replacement_type',
+        'original_volume',
+        'replacement_volume',
+        'volume_ratio',
+        'volume_gain',
+        'distance_km',
+        'same_governorate',
+    ]
+    audit = pd.DataFrame(audit_rows, columns=audit_columns)
+    n_upgraded = int(audit['upgraded'].sum()) if not audit.empty else 0
+    if n_upgraded:
+        pairs = audit[audit['upgraded']].apply(
+            lambda r: f"{r['original_anchor']} -> {r['replacement_anchor']}", axis=1
+        ).tolist()
+        print(f"  Anchor upgrade audit: upgraded {n_upgraded} anchor(s): {', '.join(pairs)}")
+    else:
+        print("  Anchor upgrade audit: no anchor upgrades required")
+
+    return selected, audit
+
+
+def promote_major_uncovered_facilities(
+    selected_facilities,
+    all_facilities,
+    major_pop_threshold=25000.0,
+    major_volume_quantile=0.80,
+    major_volume_threshold=None,
+    fallback_radius_multiplier=1.5,
+    fallback_min_distance_km=30.0,
+    require_same_governorate=True,
+):
+    """
+    Add major facilities as mandatory HSA anchors when they are not covered by
+    any selected HSA and no plausible fallback anchor exists.
+
+    This protects large hospitals from being absorbed into small, distant HSAs
+    simply because they are the nearest selected anchor.
+    """
+    if selected_facilities is None or len(selected_facilities) == 0:
+        return selected_facilities, pd.DataFrame()
+
+    selected = selected_facilities.copy()
+    facilities = all_facilities.copy()
+
+    if facilities.crs != selected.crs:
+        facilities = facilities.to_crs(selected.crs)
+    metric_crs = 'EPSG:32637'
+    selected_metric = selected.to_crs(metric_crs)
+    facilities_metric = facilities.to_crs(metric_crs)
+
+    name_col = 'HealthFacility' if 'HealthFacility' in facilities.columns else 'FacilityName'
+    if name_col not in facilities.columns:
+        raise ValueError("all_facilities must include HealthFacility or FacilityName")
+
+    selected_name_col = 'HealthFacility' if 'HealthFacility' in selected.columns else 'FacilityName'
+    selected_names = set(selected[selected_name_col].astype(str).str.strip())
+
+    radius_source = selected['service_radius_km'] if 'service_radius_km' in selected.columns else pd.Series(dtype=float)
+    default_radius = float(pd.to_numeric(radius_source, errors='coerce').dropna().median()) if len(radius_source.dropna()) else RURAL_BASE_RADIUS_KM
+    if not np.isfinite(default_radius) or default_radius <= 0:
+        default_radius = RURAL_BASE_RADIUS_KM
+
+    volume_col = None
+    for candidate_col in ('Total', 'total_diagnoses', 'patient_volume', 'volume'):
+        if candidate_col in facilities.columns:
+            volume_col = candidate_col
+            break
+
+    if major_volume_threshold is None and volume_col is not None:
+        positive_volume = pd.to_numeric(facilities[volume_col], errors='coerce')
+        positive_volume = positive_volume[positive_volume > 0]
+        if len(positive_volume) > 0:
+            major_volume_threshold = float(positive_volume.quantile(major_volume_quantile))
+        else:
+            major_volume_threshold = float('inf')
+    elif major_volume_threshold is None:
+        major_volume_threshold = float('inf')
+
+    audit_rows = []
+    promote_indices = []
+
+    selected_points = selected_metric.geometry
+    selected_radii = pd.to_numeric(
+        selected.get('service_radius_km', pd.Series(default_radius, index=selected.index)),
+        errors='coerce'
+    ).fillna(default_radius)
+    selected_governorates = (
+        selected['governorate'].fillna('').astype(str).str.strip()
+        if 'governorate' in selected.columns else pd.Series('', index=selected.index)
+    )
+
+    for idx, row in facilities.iterrows():
+        fac_name = str(row[name_col]).strip()
+        if fac_name in selected_names:
+            continue
+        geom = row.geometry
+        if geom is None or geom.is_empty:
+            continue
+
+        geom_metric = facilities_metric.loc[idx].geometry
+        distances_km = selected_points.distance(geom_metric) / 1000.0
+        nearest_idx = distances_km.idxmin()
+        nearest_dist = float(distances_km.loc[nearest_idx])
+        nearest_radius = float(selected_radii.loc[nearest_idx])
+        nearest_name = str(selected.loc[nearest_idx, selected_name_col]).strip()
+        covered = bool((distances_km <= selected_radii).any())
+
+        fac_type = ''
+        for type_col in ('healthfacilitytype', 'facility_type', 'FacilityType', 'type'):
+            if type_col in facilities.columns and pd.notna(row.get(type_col)):
+                fac_type = str(row.get(type_col)).strip()
+                break
+        fac_governorate = ''
+        if 'governorate' in facilities.columns and pd.notna(row.get('governorate')):
+            fac_governorate = str(row.get('governorate')).strip()
+        nearest_governorate = str(selected_governorates.loc[nearest_idx]).strip()
+
+        volume = float(pd.to_numeric(row.get(volume_col), errors='coerce')) if volume_col else np.nan
+        is_major = (
+            'hospital' in fac_type.lower()
+            or (pd.notna(volume) and volume >= major_volume_threshold)
+            or (pd.notna(volume) and volume >= major_pop_threshold)
+        )
+
+        fallback_limit = min(
+            100.0,
+            max(nearest_radius * fallback_radius_multiplier, fallback_min_distance_km)
+        )
+        same_governorate = (
+            bool(fac_governorate)
+            and bool(nearest_governorate)
+            and fac_governorate.lower() == nearest_governorate.lower()
+        )
+        plausible_fallback = nearest_dist <= fallback_limit and (
+            same_governorate
+            or nearest_dist <= fallback_min_distance_km
+            or not (require_same_governorate and is_major and fac_governorate)
+        )
+        promote = bool(is_major and not covered and not plausible_fallback)
+
+        audit_rows.append({
+            'facility_id': fac_name,
+            'healthfacilitytype': fac_type,
+            'governorate': fac_governorate,
+            'volume': volume,
+            'is_major_facility': bool(is_major),
+            'covered_by_existing_hsa': covered,
+            'nearest_hsa': nearest_name,
+            'nearest_hsa_governorate': nearest_governorate,
+            'distance_to_nearest_hsa_km': nearest_dist,
+            'nearest_hsa_radius_km': nearest_radius,
+            'fallback_limit_km': fallback_limit,
+            'same_governorate': same_governorate,
+            'promoted_to_anchor': promote,
+        })
+        if promote:
+            promote_indices.append(idx)
+
+    audit_columns = [
+        'anchor_name',
+        'satellite_facility',
+        'satellite_governorate',
+        'same_governorate',
+        'distance_to_anchor_km',
+        'anchor_radius_km',
+        'satellite_radius_km',
+        'satellite_volume',
+        'extends_primary_boundary',
+    ]
+    audit = pd.DataFrame(audit_rows, columns=audit_columns)
+    if not promote_indices:
+        print("  Major orphan audit: no additional anchors required")
+        return selected, audit
+
+    promoted = facilities.loc[promote_indices].copy()
+    if 'HealthFacility' not in promoted.columns and name_col in promoted.columns:
+        promoted['HealthFacility'] = promoted[name_col]
+    if 'FacilityName' not in promoted.columns:
+        promoted['FacilityName'] = promoted['HealthFacility']
+    if 'service_radius_km' not in promoted.columns:
+        promoted['service_radius_km'] = default_radius
+    promoted['service_radius_km'] = pd.to_numeric(
+        promoted['service_radius_km'], errors='coerce'
+    ).fillna(default_radius)
+    if 'initial_radius_km' not in promoted.columns:
+        promoted['initial_radius_km'] = promoted['service_radius_km']
+
+    for col in selected.columns:
+        if col not in promoted.columns and col != promoted.geometry.name:
+            promoted[col] = np.nan
+    promoted = promoted[selected.columns]
+    promoted['forced_anchor'] = True
+    promoted['promotion_reason'] = 'major_uncovered_facility'
+
+    selected['forced_anchor'] = selected.get('forced_anchor', False)
+    selected['promotion_reason'] = selected.get('promotion_reason', '')
+
+    result = pd.concat([selected, promoted], ignore_index=True)
+    result = gpd.GeoDataFrame(result, geometry=selected.geometry.name, crs=selected.crs)
+    promoted_names = ', '.join(promoted['HealthFacility'].astype(str).tolist())
+    print(f"  Major orphan audit: promoted {len(promoted)} additional anchor(s): {promoted_names}")
+    return result, audit
+
+
 def create_hsa_polygons(facilities_gdf):
 
     """
@@ -2801,6 +3203,201 @@ def create_hsa_polygons(facilities_gdf):
 
 
     return hsas_gdf
+
+
+def create_bubbled_hsa_polygons(
+    anchor_facilities_gdf,
+    all_facilities_gdf,
+    satellite_radius_fraction=0.35,
+    satellite_min_radius_km=2.0,
+    satellite_max_radius_km=6.0,
+    require_same_governorate=True,
+    require_nearest_anchor=True,
+    include_only_boundary_extending=True,
+    min_satellite_volume=0.0,
+    max_satellites_per_hsa=None,
+    metric_crs='EPSG:32637',
+):
+    """
+    Create HSA polygons as primary anchor catchments plus smaller satellite
+    facility bubbles.
+
+    The primary anchor keeps its existing service_radius_km. Eligible satellite
+    facilities inside that primary radius get smaller catchments unioned into
+    the anchor polygon when those bubbles extend the boundary. This captures
+    local service reach from non-anchor facilities without promoting each
+    satellite to a separate HSA.
+
+    Returns (hsas_gdf, audit_df). hsas_gdf has the same row order as
+    anchor_facilities_gdf and includes bubble summary columns.
+    """
+    if anchor_facilities_gdf is None or len(anchor_facilities_gdf) == 0:
+        return gpd.GeoDataFrame(geometry=[], crs=getattr(anchor_facilities_gdf, 'crs', None)), pd.DataFrame()
+
+    anchors = anchor_facilities_gdf.copy().reset_index(drop=True)
+    facilities = all_facilities_gdf.copy().reset_index(drop=True)
+
+    if anchors.crs is None:
+        anchors = anchors.set_crs('EPSG:4326', allow_override=True)
+    if facilities.crs is None:
+        facilities = facilities.set_crs(anchors.crs, allow_override=True)
+
+    original_crs = anchors.crs
+    anchors_metric = anchors.to_crs(metric_crs)
+    facilities_metric = facilities.to_crs(metric_crs)
+
+    def _name_col(gdf):
+        if 'HealthFacility' in gdf.columns:
+            return 'HealthFacility'
+        if 'FacilityName' in gdf.columns:
+            return 'FacilityName'
+        raise ValueError("GeoDataFrame must include HealthFacility or FacilityName")
+
+    def _get_governorate(row):
+        if 'governorate' in row and pd.notna(row.get('governorate')):
+            return str(row.get('governorate')).strip()
+        return ''
+
+    def _get_volume(row):
+        for col in ('Total', 'total_diagnoses', 'patient_volume', 'volume'):
+            if col in row and pd.notna(row.get(col)):
+                value = pd.to_numeric(row.get(col), errors='coerce')
+                if pd.notna(value):
+                    return float(value)
+        return 0.0
+
+    anchor_name_col = _name_col(anchors)
+    facility_name_col = _name_col(facilities)
+    selected_anchor_names = set(anchors[anchor_name_col].astype(str).str.strip())
+
+    hsa_polygons = []
+    bubble_counts = []
+    bubble_area_added_km2 = []
+    bubble_facility_names = []
+    bubble_radius_values = []
+    audit_rows = []
+
+    anchor_geoms = anchors_metric.geometry
+
+    for anchor_idx, anchor in anchors_metric.iterrows():
+        anchor_name = str(anchors.loc[anchor_idx, anchor_name_col]).strip()
+        anchor_governorate = _get_governorate(anchors.loc[anchor_idx])
+        anchor_geom = anchor.geometry
+        if anchor_geom is None or anchor_geom.is_empty:
+            hsa_polygons.append(anchor_geom)
+            bubble_counts.append(0)
+            bubble_area_added_km2.append(0.0)
+            bubble_facility_names.append('')
+            bubble_radius_values.append(np.nan)
+            continue
+        if anchor_geom.geom_type != 'Point':
+            anchor_geom = anchor_geom.representative_point()
+
+        radius_km = pd.to_numeric(anchor.get('service_radius_km'), errors='coerce')
+        if pd.isna(radius_km) or radius_km <= 0:
+            radius_km = pd.to_numeric(anchor.get('initial_radius_km'), errors='coerce')
+        if pd.isna(radius_km) or radius_km <= 0:
+            radius_km = RURAL_BASE_RADIUS_KM
+
+        satellite_radius_km = float(np.clip(
+            float(radius_km) * float(satellite_radius_fraction),
+            float(satellite_min_radius_km),
+            float(satellite_max_radius_km),
+        ))
+
+        base_polygon = anchor_geom.buffer(float(radius_km) * 1000.0)
+        distances_km = facilities_metric.geometry.distance(anchor_geom) / 1000.0
+        candidate_mask = distances_km <= float(radius_km)
+        candidate_mask &= ~facilities[facility_name_col].astype(str).str.strip().isin(selected_anchor_names)
+
+        candidates = []
+        for fac_idx, fac_metric in facilities_metric[candidate_mask].iterrows():
+            fac_info = facilities.loc[fac_idx]
+            fac_name = str(fac_info[facility_name_col]).strip()
+            fac_geom = fac_metric.geometry
+            if fac_geom is None or fac_geom.is_empty:
+                continue
+
+            fac_governorate = _get_governorate(fac_info)
+            same_governorate = (
+                bool(anchor_governorate)
+                and bool(fac_governorate)
+                and anchor_governorate.lower() == fac_governorate.lower()
+            )
+            if require_same_governorate and anchor_governorate and fac_governorate and not same_governorate:
+                continue
+
+            if require_nearest_anchor:
+                nearest_anchor_idx = int(anchor_geoms.distance(fac_geom).idxmin())
+                if nearest_anchor_idx != anchor_idx:
+                    continue
+
+            volume = _get_volume(fac_info)
+            if volume < float(min_satellite_volume):
+                continue
+
+            dist_km = float(distances_km.loc[fac_idx])
+            extends_boundary = (dist_km + satellite_radius_km) > float(radius_km)
+            if include_only_boundary_extending and not extends_boundary:
+                continue
+
+            candidates.append((volume, dist_km, fac_idx, fac_name, fac_governorate, same_governorate, extends_boundary))
+
+        candidates.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        if max_satellites_per_hsa is not None:
+            candidates = candidates[:int(max_satellites_per_hsa)]
+
+        bubbles = []
+        names = []
+        for volume, dist_km, fac_idx, fac_name, fac_governorate, same_governorate, extends_boundary in candidates:
+            fac_geom = facilities_metric.loc[fac_idx].geometry
+            bubble = fac_geom.buffer(satellite_radius_km * 1000.0)
+            bubbles.append(bubble)
+            names.append(fac_name)
+            audit_rows.append({
+                'anchor_name': anchor_name,
+                'satellite_facility': fac_name,
+                'satellite_governorate': fac_governorate,
+                'same_governorate': bool(same_governorate),
+                'distance_to_anchor_km': dist_km,
+                'anchor_radius_km': float(radius_km),
+                'satellite_radius_km': satellite_radius_km,
+                'satellite_volume': volume,
+                'extends_primary_boundary': bool(extends_boundary),
+            })
+
+        if bubbles:
+            bubbled_polygon = unary_union([base_polygon, *bubbles])
+        else:
+            bubbled_polygon = base_polygon
+
+        hsa_polygons.append(bubbled_polygon)
+        bubble_counts.append(len(bubbles))
+        bubble_area_added_km2.append(max((bubbled_polygon.area - base_polygon.area) / 1_000_000.0, 0.0))
+        bubble_facility_names.append('; '.join(names))
+        bubble_radius_values.append(satellite_radius_km if bubbles else np.nan)
+
+    hsas_metric = gpd.GeoDataFrame(
+        {
+            'satellite_bubble_count': bubble_counts,
+            'satellite_bubble_area_added_km2': bubble_area_added_km2,
+            'satellite_bubble_radius_km': bubble_radius_values,
+            'satellite_bubble_facilities': bubble_facility_names,
+        },
+        geometry=hsa_polygons,
+        crs=metric_crs,
+    )
+    hsas_metric.index = anchors.index
+
+    hsas_gdf = hsas_metric.to_crs(original_crs)
+    audit = pd.DataFrame(audit_rows)
+    total_bubbles = int(sum(bubble_counts))
+    total_added_area = float(sum(bubble_area_added_km2))
+    print(
+        f"  Satellite bubble geometry: added {total_bubbles} bubble(s), "
+        f"{total_added_area:.1f} km2 before population clipping"
+    )
+    return hsas_gdf, audit
 
 
 def _ensure_geometry_from_latlon(facilities_gdf):

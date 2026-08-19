@@ -25,9 +25,9 @@ from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
 from sklearn.preprocessing import StandardScaler
 import warnings
 import argparse
+import os
 from pathlib import Path
 import json
-from network_utils import default_target_col
 
 # Optional imports for spatial operations
 try:
@@ -40,6 +40,7 @@ except ImportError:
     HAS_SPATIAL = False
 
 warnings.filterwarnings('ignore')
+DEFAULT_PIPELINE_OUT_DIR = os.environ.get("HSA_OUT_DIR", os.environ.get("PIPELINE_OUT_DIR", "out"))
 OUTPUT_FILE_PREFIX = ""
 TEXT_RESULTS_DIR = None
 
@@ -64,7 +65,16 @@ CLIMATE_FEATURES = [
 
 def load_facility_data(data_dir, network):
     """Load facility coordinates and climate data."""
-    fac_file = data_dir / f'{network}_facility_coordinates.csv'
+    fac_file = next(
+        (data_dir / f for f in [
+            f'{network}_facility_coordinates.csv',
+            f'SYN{network}_facility_coordinates.csv',
+            f'SYNMOD{network}_facility_coordinates.csv',
+        ] if (data_dir / f).exists()),
+        None,
+    )
+    if fac_file is None:
+        raise FileNotFoundError(f"No facility coordinates file found for network '{network}' in {data_dir}")
     fac_df = pd.read_csv(fac_file)
 
     # Rename columns if needed
@@ -99,9 +109,9 @@ def load_governorates(data_dir):
     raise FileNotFoundError("Governorate file not found")
 
 
-def load_hsa_data(out_dir, network, hsa_mode):
+def load_hsa_data(out_dir, network, hsa_mode, boundary_version="v7"):
     """Load HSA modeling dataset."""
-    hsa_file = out_dir / 'modeling' / f'{network}_{hsa_mode}_modeling_dataset.csv'
+    hsa_file = out_dir / 'modeling' / f'{network}_{hsa_mode}_modeling_dataset_{boundary_version}.csv'
     if hsa_file.exists():
         return pd.read_csv(hsa_file)
     raise FileNotFoundError(f"HSA modeling dataset not found: {hsa_file}")
@@ -274,11 +284,11 @@ def fit_and_evaluate_models(X_train, y_train, X_test, y_test):
     return results
 
 
-def run_hsa_analysis(out_dir, network, hsa_mode, target_col):
+def run_hsa_analysis(out_dir, network, hsa_mode, target_col, boundary_version="v7"):
     """Run analysis on HSA spatial units."""
     print("\n--- HSA Spatial Units (FOOTPRINT) ---")
 
-    df = load_hsa_data(out_dir, network, hsa_mode)
+    df = load_hsa_data(out_dir, network, hsa_mode, boundary_version)
 
     # Prepare data with per-HSA AR lags
     df, features = prepare_model_data(df, target_col, group_col='hsa_id')
@@ -302,7 +312,7 @@ def run_hsa_analysis(out_dir, network, hsa_mode, target_col):
     return results
 
 
-def run_governorate_analysis(data_dir, out_dir, network, hsa_mode, target_col):
+def run_governorate_analysis(data_dir, out_dir, network, hsa_mode, target_col, boundary_version="v7"):
     """Run analysis on governorate spatial units."""
     print("\n--- Governorate Spatial Units ---")
 
@@ -310,7 +320,7 @@ def run_governorate_analysis(data_dir, out_dir, network, hsa_mode, target_col):
     # In practice, this would require mapping HSAs to governorates
     # For now, we'll use governorate-level aggregation
 
-    hsa_df = load_hsa_data(out_dir, network, hsa_mode)
+    hsa_df = load_hsa_data(out_dir, network, hsa_mode, boundary_version)
 
     # Aggregate across all HSAs (simulate governorate-level)
     gov_df = hsa_df.groupby(['week_number', 'week_of_year']).agg({
@@ -340,7 +350,7 @@ def run_governorate_analysis(data_dir, out_dir, network, hsa_mode, target_col):
     return results
 
 
-def run_comparison_analysis(data_dir, out_dir, network, hsa_mode, target_col, output_dir):
+def run_comparison_analysis(data_dir, out_dir, network, hsa_mode, target_col, output_dir, boundary_version="v7"):
     """Run comparison across all spatial unit types."""
     print("="*80)
     print("CROSS-SPATIAL-UNIT MODEL COMPARISON")
@@ -350,16 +360,16 @@ def run_comparison_analysis(data_dir, out_dir, network, hsa_mode, target_col, ou
     all_results = {}
 
     # 1. HSA analysis
-    all_results[f'HSA ({hsa_mode.upper()})'] = run_hsa_analysis(out_dir, network, hsa_mode, target_col)
+    all_results[f'HSA ({hsa_mode.upper()})'] = run_hsa_analysis(out_dir, network, hsa_mode, target_col, boundary_version)
 
     # 2. Governorate analysis
-    all_results['Governorate'] = run_governorate_analysis(data_dir, out_dir, network, hsa_mode, target_col)
+    all_results['Governorate'] = run_governorate_analysis(data_dir, out_dir, network, hsa_mode, target_col, boundary_version)
 
     # 3. For Voronoi and Fixed-radius, we would need additional spatial data
     # For now, we'll compare aggregation levels
 
     print("\n--- Country-Level Aggregation (Voronoi proxy) ---")
-    hsa_df = load_hsa_data(out_dir, network, hsa_mode)
+    hsa_df = load_hsa_data(out_dir, network, hsa_mode, boundary_version)
     country_df = hsa_df.groupby(['week_number', 'week_of_year']).agg({
         target_col: 'sum',  # Total for country
         **{col: 'mean' for col in CLIMATE_FEATURES if col in hsa_df.columns}
@@ -382,7 +392,7 @@ def run_comparison_analysis(data_dir, out_dir, network, hsa_mode, target_col, ou
 
     # 4. Per-facility analysis (no spatial aggregation)
     print("\n--- Per-Facility (No Spatial Aggregation) ---")
-    hsa_df = load_hsa_data(out_dir, network, hsa_mode)
+    hsa_df = load_hsa_data(out_dir, network, hsa_mode, boundary_version)
 
     # Use data as-is (each HSA separately, with per-HSA AR lags)
     hsa_df, features = prepare_model_data(hsa_df, target_col, group_col='hsa_id')
@@ -512,14 +522,15 @@ def create_summary_table(comparison_df, output_dir):
 
 def main():
     parser = argparse.ArgumentParser(description='Cross-Spatial-Unit Model Comparison')
-    parser.add_argument('--network', default='INF',
-                        help='Network label, e.g. INF, NCD, SYNINF, SYNNCD, SYNMODINF, SYNMODNCD')
+    parser.add_argument('--network', default='INF', )
     parser.add_argument('--hsa-mode', default='footprint')
     parser.add_argument('--data-dir', default='data')
-    parser.add_argument('--out-dir', default='out')
-    parser.add_argument('--output-dir', default='out/analysis_spatial_comparison')
-    parser.add_argument('--text-output-dir', default='out/textresults')
+    parser.add_argument('--out-dir', default=DEFAULT_PIPELINE_OUT_DIR)
+    parser.add_argument('--output-dir', default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / 'analysis_spatial_comparison'))
+    parser.add_argument('--text-output-dir', default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / 'textresults'))
     parser.add_argument('--target-col', default=None)
+    parser.add_argument('--boundary-version', default=os.environ.get("BOUNDARY_VERSION", os.environ.get("PIPELINE_VERSION", "v7")),
+                        help="HSA boundary version (v6, v7, v8)")
 
     args = parser.parse_args()
 
@@ -534,10 +545,10 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if args.target_col is None:
-        args.target_col = default_target_col(args.network)
+        args.target_col = 'diarrheal_count_adjusted' if args.network == 'INF' else 'hypertension_count_adjusted'
 
     comparison_df, all_results = run_comparison_analysis(
-        data_dir, out_dir, args.network, args.hsa_mode, args.target_col, output_dir
+        data_dir, out_dir, args.network, args.hsa_mode, args.target_col, output_dir, args.boundary_version
     )
 
     print("\n" + "="*80)

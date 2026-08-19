@@ -9,8 +9,8 @@ Adjustments:
 2. For facilities in multiple HSAs: patients split proportionally by gravity model probabilities
 
 Output:
-- {NETWORK}_{HSA_MODE}_weekly_{DISEASE_FOCUS}_adjusted.csv: Adjusted primary disease counts
-- {NETWORK}_{HSA_MODE}_weekly_{SECONDARY_LABEL}_adjusted.csv: Adjusted secondary counts
+- {NETWORK}_{HSA_MODE}_weekly_{DISEASE_FOCUS}_adjusted_{BOUNDARY_VERSION}.csv: Adjusted primary disease counts
+- {NETWORK}_{HSA_MODE}_weekly_{SECONDARY_LABEL}_adjusted_{BOUNDARY_VERSION}.csv: Adjusted secondary counts
 """
 
 import pandas as pd
@@ -22,11 +22,6 @@ import os
 from pathlib import Path
 import argparse
 from scipy.spatial import cKDTree
-from network_utils import default_disease_focus, secondary_label
-
-# Default date configuration (can be overridden via CLI)
-DEFAULT_WEEK_START = "2019-01-07"
-DEFAULT_WEEK_END = "2024-01-29"
 
 def _parse_network_mode(hsa_geojson_path):
     stem = Path(hsa_geojson_path).stem
@@ -44,23 +39,39 @@ def _parse_network_mode(hsa_geojson_path):
             network = parts[0]
             mode = "_".join(parts[1:hsas_idx])
             return network, mode
-    # Fallback to env or defaults
-    return os.environ.get("NETWORK", "INF"), os.environ.get("HSA_MODE", "footprint")
+    # Fallback to env vars; raise if neither is available
+    network  = os.environ.get("NETWORK")
+    hsa_mode = os.environ.get("HSA_MODE")
+    if not network or not hsa_mode:
+        raise ValueError(
+            f"Cannot parse NETWORK/HSA_MODE from GeoJSON path '{hsa_geojson_path}'. "
+            "Pass a properly named GeoJSON ({NETWORK}_{MODE}_hsas*.geojson) "
+            "or set NETWORK and HSA_MODE environment variables."
+        )
+    return network, hsa_mode
 
 def _default_disease(network):
-    return default_disease_focus(network)
+    return "diarrheal" if network in ("INF", "SYNINF") else "hypertension"
 
 def _secondary_label(network):
-    return secondary_label(network)
+    return "infectious" if network in ("INF", "SYNINF") else "ncd"
 
 parser = argparse.ArgumentParser(description="Generate adjusted weekly disease counts")
 parser.add_argument("hsa_geojson", nargs="?", default=None)
 parser.add_argument("--disease", default=None, help="Primary disease focus (e.g., diarrheal, hypertension)")
-parser.add_argument("--week-start", default=os.environ.get("WEEK_START", DEFAULT_WEEK_START),
-                    help=f"Start date for weeks (default: {DEFAULT_WEEK_START})")
-parser.add_argument("--week-end", default=os.environ.get("WEEK_END", DEFAULT_WEEK_END),
-                    help=f"End date for weeks (default: {DEFAULT_WEEK_END})")
+parser.add_argument("--week-start", default=os.environ.get("WEEK_START"),
+                    help="Start date for weekly bins (YYYY-MM-DD). Required.")
+parser.add_argument("--week-end", default=os.environ.get("WEEK_END"),
+                    help="End date for weekly bins (YYYY-MM-DD). Required.")
+parser.add_argument("--out-dir", default=os.environ.get("HSA_OUT_DIR", os.environ.get("PIPELINE_OUT_DIR", "out")),
+                    help="Pipeline output directory containing allocation files and receiving weekly counts")
+parser.add_argument("--boundary-version", default=os.environ.get("BOUNDARY_VERSION", os.environ.get("PIPELINE_VERSION", "v7")),
+                    help="HSA boundary version (v6, v7, v8). Must match the run that produced allocation files.")
 args = parser.parse_args()
+if not args.week_start or not args.week_end:
+    parser.error("--week-start and --week-end are required (set in notebook or via WEEK_START/WEEK_END env vars)")
+OUT_DIR = Path(args.out_dir)
+OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 if args.hsa_geojson:
     HSA_GEOJSON = args.hsa_geojson
@@ -100,8 +111,8 @@ from pathlib import Path
 # Step 2: Load gravity model allocation details
 print("\n[2/7] Loading gravity model allocations...")
 # Try both naming conventions (old and new/probabilistic)
-alloc_path = Path(f'out/{NETWORK}_{HSA_MODE}_allocation_details.csv')
-alloc_path_alt = Path(f'out/pixel_allocations_{NETWORK}_{HSA_MODE}.csv')
+alloc_path = OUT_DIR / f'{NETWORK}_{HSA_MODE}_allocation_details_{args.boundary_version}.csv'
+alloc_path_alt = OUT_DIR / f'pixel_allocations_{NETWORK}_{HSA_MODE}_{args.boundary_version}.csv'
 
 if alloc_path.exists():
     print(f"  Using: {alloc_path}")
@@ -114,7 +125,7 @@ else:
         f"  - {alloc_path}\n"
         f"  - {alloc_path_alt}\n"
         "Run patient allocation for this network/mode to generate it "
-        "(e.g., Patient_Allocation_Probabilistic.ipynb or the old allocation notebook), "
+        "(e.g., Population_Allocation_Probabilistic_v2.ipynb or the old allocation notebook), "
         "or use generate_weekly_disease_counts.py for unadjusted counts."
     )
 alloc_details = pd.read_csv(alloc_path)
@@ -124,9 +135,16 @@ print(f"  Loaded {len(alloc_details):,} population pixels with facility assignme
 # Use FACILITY_DATA env var if set, otherwise try non-synthetic file first
 fac_file = os.environ.get('FACILITY_DATA')
 if not fac_file:
-    fac_file = f'data/{NETWORK}_facility_coordinates.csv'
-    if not Path(fac_file).exists():
-        fac_file = f'data/SYN{NETWORK}_facility_coordinates.csv'
+    for _candidate in [
+        f'data/{NETWORK}_facility_coordinates.csv',
+        f'data/SYN{NETWORK}_facility_coordinates.csv',
+        f'data/SYNMOD{NETWORK}_facility_coordinates.csv',
+    ]:
+        if Path(_candidate).exists():
+            fac_file = _candidate
+            break
+    if not fac_file:
+        raise FileNotFoundError(f"No facility coordinates file found for network '{NETWORK}' in data/")
 print(f"  Using facilities: {fac_file}")
 facilities_df = pd.read_csv(fac_file, encoding='utf-8-sig')
 facilities_df['healthfacility'] = facilities_df['healthfacility'].str.replace('\xa0', ' ').str.replace(r'\s+', ' ', regex=True).str.strip()
@@ -242,11 +260,16 @@ print("\n[5/7] Loading patient data...")
 # Use PATIENT_DATA env var if set, otherwise try non-synthetic file first, then synthetic
 pat_file = os.environ.get('PATIENT_DATA')
 if not pat_file:
-    pat_file = f'data/{NETWORK}_patient_visits.csv'
-    if not Path(pat_file).exists():
-        pat_file = f'data/SYN{NETWORK}_patient_visits.csv'
-if not Path(pat_file).exists():
-    raise FileNotFoundError(f"Patient data file not found: {pat_file}")
+    for _candidate in [
+        f'data/{NETWORK}_patient_visits.csv',
+        f'data/SYN{NETWORK}_patient_visits.csv',
+        f'data/SYNMOD{NETWORK}_patient_visits.csv',
+    ]:
+        if Path(_candidate).exists():
+            pat_file = _candidate
+            break
+if not pat_file or not Path(pat_file).exists():
+    raise FileNotFoundError(f"No patient visits file found for network '{NETWORK}' in data/")
 print(f"  Using: {pat_file}")
 patients = pd.read_csv(pat_file, encoding='utf-8-sig')
 patients['date'] = pd.to_datetime(patients['datetimediagnosisentered'])
@@ -358,11 +381,13 @@ secondary_weekly['week_start_iso'] = secondary_weekly['week_start'].dt.strftime(
 
 # Step 7: Save outputs
 print("\n[8/8] Saving adjusted counts...")
-target_weekly.to_csv(f'out/{NETWORK}_{HSA_MODE}_weekly_{DISEASE_FOCUS}_adjusted.csv', index=False)
-secondary_weekly.to_csv(f'out/{NETWORK}_{HSA_MODE}_weekly_{SECONDARY_LABEL}_adjusted.csv', index=False)
+target_out = OUT_DIR / f'{NETWORK}_{HSA_MODE}_weekly_{DISEASE_FOCUS}_adjusted_{args.boundary_version}.csv'
+secondary_out = OUT_DIR / f'{NETWORK}_{HSA_MODE}_weekly_{SECONDARY_LABEL}_adjusted_{args.boundary_version}.csv'
+target_weekly.to_csv(target_out, index=False)
+secondary_weekly.to_csv(secondary_out, index=False)
 
-print(f"  Saved: out/{NETWORK}_{HSA_MODE}_weekly_{DISEASE_FOCUS}_adjusted.csv")
-print(f"  Saved: out/{NETWORK}_{HSA_MODE}_weekly_{SECONDARY_LABEL}_adjusted.csv")
+print(f"  Saved: {target_out}")
+print(f"  Saved: {secondary_out}")
 
 # Summary
 print("\n" + "="*80)

@@ -16,6 +16,7 @@ import pandas as pd
 import numpy as np
 import geopandas as gpd
 import argparse
+import os
 from pathlib import Path
 import json
 import warnings
@@ -23,6 +24,7 @@ from typing import Dict, List, Tuple, Optional
 from scipy.spatial import cKDTree
 
 warnings.filterwarnings('ignore')
+DEFAULT_PIPELINE_OUT_DIR = os.environ.get("HSA_OUT_DIR", os.environ.get("PIPELINE_OUT_DIR", "out"))
 OUTPUT_FILE_PREFIX = ""
 TEXT_RESULTS_DIR = None
 
@@ -38,8 +40,9 @@ def md_path(filename: str) -> Path:
 BASE_DIR = Path(__file__).resolve().parent
 NETWORK = "INF"
 HSA_MODE = "footprint"
+BOUNDARY_VERSION = os.environ.get("BOUNDARY_VERSION", os.environ.get("PIPELINE_VERSION", "v7"))
 DATA_DIR = BASE_DIR / "data"
-OUT_DIR = BASE_DIR / "out"
+OUT_DIR = Path(os.environ.get("HSA_OUT_DIR", os.environ.get("PIPELINE_OUT_DIR", "out")))
 ANALYSIS_DIR = OUT_DIR / "analysis_exclusion"
 
 # Analysis parameters
@@ -84,14 +87,23 @@ def load_data() -> Tuple[pd.DataFrame, pd.DataFrame, gpd.GeoDataFrame]:
     print("Loading data...")
 
     # Load pixel allocations
-    alloc_path = OUT_DIR / f"pixel_allocations_{NETWORK}_{HSA_MODE}.csv"
+    alloc_path = OUT_DIR / f"pixel_allocations_{NETWORK}_{HSA_MODE}_{BOUNDARY_VERSION}.csv"
     print(f"  Loading pixel allocations from {alloc_path}")
     allocations = pd.read_csv(alloc_path)
     print(f"    Loaded {len(allocations):,} allocated pixels")
     print(f"    Total population: {allocations['population'].sum():,.0f}")
 
     # Load facility coordinates
-    fac_path = DATA_DIR / f"{NETWORK}_facility_coordinates.csv"
+    fac_path = next(
+        (DATA_DIR / f for f in [
+            f'{NETWORK}_facility_coordinates.csv',
+            f'SYN{NETWORK}_facility_coordinates.csv',
+            f'SYNMOD{NETWORK}_facility_coordinates.csv',
+        ] if (DATA_DIR / f).exists()),
+        None,
+    )
+    if fac_path is None:
+        raise FileNotFoundError(f"No facility coordinates file found for network '{NETWORK}' in {DATA_DIR}")
     print(f"  Loading facilities from {fac_path}")
     facilities = pd.read_csv(fac_path)
 
@@ -556,20 +568,22 @@ def generate_markdown_report(summary: Dict,
 def main():
     """Main analysis function."""
     parser = argparse.ArgumentParser(description="Phase 1A: Excluded Population Analysis")
-    parser.add_argument("--network", default="INF",
-                        help='Network label, e.g. INF, NCD, SYNINF, SYNNCD, SYNMODINF, SYNMODNCD')
+    parser.add_argument("--network", default="INF", )
     parser.add_argument("--hsa-mode", default="footprint")
     parser.add_argument("--data-dir", default="data")
-    parser.add_argument("--out-dir", default="out")
-    parser.add_argument("--output-dir", default="out/analysis_exclusion")
-    parser.add_argument("--text-output-dir", default="out/textresults")
+    parser.add_argument("--out-dir", default=DEFAULT_PIPELINE_OUT_DIR)
+    parser.add_argument("--output-dir", default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / "analysis_exclusion"))
+    parser.add_argument("--text-output-dir", default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / "textresults"))
+    parser.add_argument("--boundary-version", default=os.environ.get("BOUNDARY_VERSION", os.environ.get("PIPELINE_VERSION", "v7")),
+                        help="HSA boundary version (v6, v7, v8). Must match the run that produced allocation files.")
     args = parser.parse_args()
 
-    global NETWORK, HSA_MODE, DATA_DIR, OUT_DIR, ANALYSIS_DIR, OUTPUT_FILE_PREFIX, TEXT_RESULTS_DIR
+    global NETWORK, HSA_MODE, DATA_DIR, OUT_DIR, ANALYSIS_DIR, OUTPUT_FILE_PREFIX, TEXT_RESULTS_DIR, BOUNDARY_VERSION
     NETWORK = args.network
     HSA_MODE = args.hsa_mode
     DATA_DIR = Path(args.data_dir)
     OUT_DIR = Path(args.out_dir)
+    BOUNDARY_VERSION = args.boundary_version
     ANALYSIS_DIR = Path(args.output_dir)
     OUTPUT_FILE_PREFIX = f"{NETWORK}_{HSA_MODE}"
     TEXT_RESULTS_DIR = Path(args.text_output_dir)

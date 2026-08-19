@@ -3,7 +3,7 @@
 
 # Core data science
 numpy>=1.24.0
-pandas>=2.0.0
+pandas>=2.0.0,<3.0.0
 scipy>=1.10.0
 
 # Geospatial analysis
@@ -44,5 +44,10 @@ ipykernel>=6.20.0
 # Progress bars (optional but helpful for large operations)
 tqdm>=4.65.0
 
-# Statistics (optional)
+# Statistics and epidemiological modeling
 statsmodels>=0.14.0
+patsy>=0.5.3         # Formula-based model matrices (used by dlnm module)
+
+# DLNM cross-basis modeling (daily climate-health analysis)
+# The dlnm/ package is included in this repository.
+# No separate installation needed beyond the packages above.

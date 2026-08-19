@@ -7,7 +7,7 @@ This script tests how variations in the optimization weights affect
 HSA delineation outcomes. It validates that results aren't arbitrary
 by showing robustness (or sensitivity) to weight configurations.
 
-Weight Components (from HSA_v6_FINAL.ipynb):
+Weight components (from HSA_FINAL.ipynb):
 - population_coverage: Population coverage weight
 - climatic_diversity: Climate diversity across HSAs
 - facility_volume: Facility patient volume
@@ -27,12 +27,14 @@ from sklearn.metrics import r2_score, mean_absolute_error
 from sklearn.preprocessing import StandardScaler
 import warnings
 import argparse
+import os
 from pathlib import Path
 import json
 from itertools import product
 from scipy.spatial.distance import pdist
 
 warnings.filterwarnings('ignore')
+DEFAULT_PIPELINE_OUT_DIR = os.environ.get("HSA_OUT_DIR", os.environ.get("PIPELINE_OUT_DIR", "out"))
 OUTPUT_FILE_PREFIX = ""
 TEXT_RESULTS_DIR = None
 
@@ -62,17 +64,17 @@ PERTURBATION_LEVELS = [0.8, 0.9, 1.0, 1.1, 1.2]  # ±20%, ±10%, base
 CLIMATE_VARS = ['T_mean_week_C', 'P_total_week', 'elevation_m']
 
 
-def load_hsa_results(out_dir, network, hsa_mode):
+def load_hsa_results(out_dir, network, hsa_mode, boundary_version="v7"):
     """Load existing HSA delineation results."""
     print("Loading HSA results...")
 
     # Load HSA characteristics
-    hsa_file = out_dir / f'{network}_{hsa_mode}_hsas_v2.geojson'
+    hsa_file = out_dir / f'{network}_{hsa_mode}_hsas_{boundary_version}.geojson'
 
     if not hsa_file.exists():
         print(f"  HSA file not found: {hsa_file}")
         # Try alternate path
-        hsa_file = out_dir / f'{network}_footprint_hsas_v2.geojson'
+        hsa_file = out_dir / f'{network}_footprint_hsas_{boundary_version}.geojson'
 
     try:
         import geopandas as gpd
@@ -84,9 +86,9 @@ def load_hsa_results(out_dir, network, hsa_mode):
         return None
 
 
-def load_allocation_summary(out_dir, network, hsa_mode):
+def load_allocation_summary(out_dir, network, hsa_mode, boundary_version="v7"):
     """Load allocation summary statistics."""
-    alloc_file = out_dir / f'pixel_allocations_{network}_{hsa_mode}.csv'
+    alloc_file = out_dir / f'pixel_allocations_{network}_{hsa_mode}_{boundary_version}.csv'
 
     if not alloc_file.exists():
         return None
@@ -402,7 +404,7 @@ def create_elasticity_table(sensitivity_metrics, output_dir):
         f.write('\n'.join(md_lines))
 
 
-def run_weight_sensitivity_analysis(out_dir, network, hsa_mode, output_dir):
+def run_weight_sensitivity_analysis(out_dir, network, hsa_mode, output_dir, boundary_version="v7"):
     """Main analysis function."""
 
     print("\n" + "=" * 70)
@@ -410,8 +412,8 @@ def run_weight_sensitivity_analysis(out_dir, network, hsa_mode, output_dir):
     print("=" * 70)
 
     # Load existing data
-    hsas = load_hsa_results(out_dir, network, hsa_mode)
-    allocation_summary = load_allocation_summary(out_dir, network, hsa_mode)
+    hsas = load_hsa_results(out_dir, network, hsa_mode, boundary_version=boundary_version)
+    allocation_summary = load_allocation_summary(out_dir, network, hsa_mode, boundary_version=boundary_version)
     climate_data = load_facility_climate(out_dir, network)
 
     # Calculate baseline characteristics
@@ -512,12 +514,13 @@ def run_weight_sensitivity_analysis(out_dir, network, hsa_mode, output_dir):
 
 def main():
     parser = argparse.ArgumentParser(description='Weight Sensitivity Analysis')
-    parser.add_argument('--network', default='INF',
-                        help='Network label, e.g. INF, NCD, SYNINF, SYNNCD, SYNMODINF, SYNMODNCD')
+    parser.add_argument('--network', default='INF', )
     parser.add_argument('--hsa-mode', default='footprint')
-    parser.add_argument('--out-dir', default='out')
-    parser.add_argument('--output-dir', default='out/analysis_weight_sensitivity')
-    parser.add_argument('--text-output-dir', default='out/textresults')
+    parser.add_argument('--boundary-version', default=os.environ.get("BOUNDARY_VERSION", os.environ.get("PIPELINE_VERSION", "v7")),
+                        help='HSA boundary version to load (v6, v7, v8). Default: BOUNDARY_VERSION env or v7.')
+    parser.add_argument('--out-dir', default=DEFAULT_PIPELINE_OUT_DIR)
+    parser.add_argument('--output-dir', default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / 'analysis_weight_sensitivity'))
+    parser.add_argument('--text-output-dir', default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / 'textresults'))
 
     args = parser.parse_args()
 
@@ -530,7 +533,8 @@ def main():
     output_dir = Path(args.output_dir) / args.network
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    run_weight_sensitivity_analysis(out_dir, args.network, args.hsa_mode, output_dir)
+    run_weight_sensitivity_analysis(out_dir, args.network, args.hsa_mode, output_dir,
+                                    boundary_version=args.boundary_version)
 
 
 if __name__ == '__main__':

@@ -28,11 +28,12 @@ from sklearn.preprocessing import StandardScaler
 from scipy import stats
 import warnings
 import argparse
+import os
 from pathlib import Path
 import json
-from network_utils import default_target_col
 
 warnings.filterwarnings('ignore')
+DEFAULT_PIPELINE_OUT_DIR = os.environ.get("HSA_OUT_DIR", os.environ.get("PIPELINE_OUT_DIR", "out"))
 OUTPUT_FILE_PREFIX = ""
 TEXT_RESULTS_DIR = None
 
@@ -70,9 +71,9 @@ EXISTING_EXTREMES = [
 ]
 
 
-def load_modeling_data(out_dir, network, hsa_mode):
+def load_modeling_data(out_dir, network, hsa_mode, boundary_version="v7"):
     """Load the modeling dataset."""
-    file_path = out_dir / 'modeling' / f'{network}_{hsa_mode}_modeling_dataset.csv'
+    file_path = out_dir / 'modeling' / f'{network}_{hsa_mode}_modeling_dataset_{boundary_version}.csv'
     df = pd.read_csv(file_path)
     print(f"Loaded {len(df)} rows, {len(df.columns)} columns")
     print(f"HSAs: {df['hsa_id'].nunique()}, Weeks: {df['week_number'].nunique()}")
@@ -606,13 +607,14 @@ def create_summary_table(results_df, output_dir):
 
 def main():
     parser = argparse.ArgumentParser(description='Extreme Event Analysis')
-    parser.add_argument('--network', default='INF',
-                        help='Network label, e.g. INF, NCD, SYNINF, SYNNCD, SYNMODINF, SYNMODNCD')
+    parser.add_argument('--network', default='INF', )
     parser.add_argument('--hsa-mode', default='footprint')
-    parser.add_argument('--out-dir', default='out')
-    parser.add_argument('--output-dir', default='out/analysis_extreme_events')
-    parser.add_argument('--text-output-dir', default='out/textresults')
+    parser.add_argument('--out-dir', default=DEFAULT_PIPELINE_OUT_DIR)
+    parser.add_argument('--output-dir', default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / 'analysis_extreme_events'))
+    parser.add_argument('--text-output-dir', default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / 'textresults'))
     parser.add_argument('--target-col', default=None)
+    parser.add_argument('--boundary-version', default=os.environ.get("BOUNDARY_VERSION", os.environ.get("PIPELINE_VERSION", "v7")),
+                        help="HSA boundary version (v6, v7, v8)")
 
     args = parser.parse_args()
 
@@ -626,7 +628,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if args.target_col is None:
-        args.target_col = default_target_col(args.network)
+        args.target_col = 'diarrheal_count_adjusted' if args.network == 'INF' else 'hypertension_count_adjusted'
 
     print("="*80)
     print("EXTREME EVENT ANALYSIS")
@@ -635,7 +637,7 @@ def main():
     print("="*80)
 
     # Load data
-    df = load_modeling_data(out_dir, args.network, args.hsa_mode)
+    df = load_modeling_data(out_dir, args.network, args.hsa_mode, args.boundary_version)
 
     # Create additional extreme indicators
     df = create_additional_extreme_indicators(df)

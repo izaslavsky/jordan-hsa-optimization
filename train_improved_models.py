@@ -33,6 +33,7 @@ except Exception as e:
 # CONFIGURATION
 # ============================================================================
 
+DEFAULT_PIPELINE_OUT_DIR = os.environ.get("HSA_OUT_DIR", os.environ.get("PIPELINE_OUT_DIR", "out"))
 DEFAULT_RANDOM_SEED = 42
 
 print("="*80)
@@ -43,10 +44,12 @@ parser = argparse.ArgumentParser(description="Train improved models with AR feat
 parser.add_argument("--network", default=os.environ.get("NETWORK", "INF"))
 parser.add_argument("--hsa-mode", default=os.environ.get("HSA_MODE", "footprint"))
 parser.add_argument("--target-col", default=os.environ.get("TARGET_COL", "diarrheal_count_adjusted"))
-parser.add_argument("--data-dir", default=os.environ.get("MODEL_DATA_DIR", "out/modeling"))
-parser.add_argument("--output-dir", default=os.environ.get("MODEL_OUTPUT_DIR", "out/modeling/results_improved"))
+parser.add_argument("--data-dir", default=os.environ.get("MODEL_DATA_DIR", str(Path(DEFAULT_PIPELINE_OUT_DIR) / "modeling")))
+parser.add_argument("--output-dir", default=os.environ.get("MODEL_OUTPUT_DIR", str(Path(DEFAULT_PIPELINE_OUT_DIR) / "modeling" / "results_improved")))
 parser.add_argument("--random-seed", type=int, default=int(os.environ.get("RANDOM_SEED", DEFAULT_RANDOM_SEED)),
                     help=f"Random seed for reproducibility (default: {DEFAULT_RANDOM_SEED})")
+parser.add_argument("--boundary-version", default=os.environ.get("BOUNDARY_VERSION", os.environ.get("PIPELINE_VERSION", "v7")),
+                    help="HSA boundary version (v6, v7, v8)")
 args = parser.parse_args()
 NETWORK = args.network
 HSA_MODE = args.hsa_mode
@@ -55,15 +58,16 @@ DATA_DIR = Path(args.data_dir)
 OUTPUT_DIR = Path(args.output_dir)
 OUTPUT_DIR.mkdir(exist_ok=True, parents=True)
 RANDOM_SEED = args.random_seed
+BOUNDARY_VERSION = args.boundary_version
 np.random.seed(RANDOM_SEED)
 
 # ============================================================================
 # LOAD DATA
 # ============================================================================
 
-train_candidate = DATA_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_train.csv"
-val_candidate = DATA_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_val.csv"
-test_candidate = DATA_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_test.csv"
+train_candidate = DATA_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_{BOUNDARY_VERSION}_train.csv"
+val_candidate = DATA_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_{BOUNDARY_VERSION}_val.csv"
+test_candidate = DATA_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_{BOUNDARY_VERSION}_test.csv"
 
 train = pd.read_csv(train_candidate if train_candidate.exists() else DATA_DIR / "modeling_dataset_train.csv")
 val = pd.read_csv(val_candidate if val_candidate.exists() else DATA_DIR / "modeling_dataset_val.csv")

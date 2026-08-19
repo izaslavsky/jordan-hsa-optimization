@@ -27,12 +27,13 @@ from sklearn.preprocessing import StandardScaler
 from scipy.spatial.distance import pdist, squareform
 import warnings
 import argparse
+import os
 from pathlib import Path
 import json
-from network_utils import default_target_col
 from itertools import product
 
 warnings.filterwarnings('ignore')
+DEFAULT_PIPELINE_OUT_DIR = os.environ.get("HSA_OUT_DIR", os.environ.get("PIPELINE_OUT_DIR", "out"))
 OUTPUT_FILE_PREFIX = ""
 TEXT_RESULTS_DIR = None
 
@@ -59,7 +60,16 @@ CLIMATE_FEATURES = [
 
 def load_facility_data(data_dir, network):
     """Load facility coordinates and patient volumes."""
-    fac_file = data_dir / f'{network}_facility_coordinates.csv'
+    fac_file = next(
+        (data_dir / f for f in [
+            f'{network}_facility_coordinates.csv',
+            f'SYN{network}_facility_coordinates.csv',
+            f'SYNMOD{network}_facility_coordinates.csv',
+        ] if (data_dir / f).exists()),
+        None,
+    )
+    if fac_file is None:
+        raise FileNotFoundError(f"No facility coordinates file found for network '{network}' in {data_dir}")
     fac_df = pd.read_csv(fac_file)
 
     # Standardize column names
@@ -72,17 +82,17 @@ def load_facility_data(data_dir, network):
     return fac_df
 
 
-def load_hsa_data(out_dir, network, hsa_mode):
+def load_hsa_data(out_dir, network, hsa_mode, boundary_version="v7"):
     """Load HSA modeling dataset."""
-    hsa_file = out_dir / 'modeling' / f'{network}_{hsa_mode}_modeling_dataset.csv'
+    hsa_file = out_dir / 'modeling' / f'{network}_{hsa_mode}_modeling_dataset_{boundary_version}.csv'
     return pd.read_csv(hsa_file)
 
 
-def load_allocation_data(out_dir, network, hsa_mode, sample_size=10000):
+def load_allocation_data(out_dir, network, hsa_mode, sample_size=10000, boundary_version="v7"):
     """Load a sample of the allocation details for analysis."""
-    # Try both naming conventions (old and new/probabilistic)
-    alloc_file = out_dir / f'{network}_{hsa_mode}_allocation_details.csv'
-    alloc_file_alt = out_dir / f'pixel_allocations_{network}_{hsa_mode}.csv'
+    # Try both naming conventions (allocation_details preferred, pixel_allocations as fallback)
+    alloc_file = out_dir / f'{network}_{hsa_mode}_allocation_details_{boundary_version}.csv'
+    alloc_file_alt = out_dir / f'pixel_allocations_{network}_{hsa_mode}_{boundary_version}.csv'
 
     if alloc_file.exists():
         pass  # Use primary name
@@ -414,15 +424,16 @@ def create_summary_table(sensitivity_df, output_dir):
 
 def main():
     parser = argparse.ArgumentParser(description='Gravity Model Sensitivity Analysis')
-    parser.add_argument('--network', default='INF',
-                        help='Network label, e.g. INF, NCD, SYNINF, SYNNCD, SYNMODINF, SYNMODNCD')
+    parser.add_argument('--network', default='INF', )
     parser.add_argument('--hsa-mode', default='footprint')
     parser.add_argument('--data-dir', default='data')
-    parser.add_argument('--out-dir', default='out')
-    parser.add_argument('--output-dir', default='out/analysis_gravity_sensitivity')
-    parser.add_argument('--text-output-dir', default='out/textresults')
+    parser.add_argument('--out-dir', default=DEFAULT_PIPELINE_OUT_DIR)
+    parser.add_argument('--output-dir', default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / 'analysis_gravity_sensitivity'))
+    parser.add_argument('--text-output-dir', default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / 'textresults'))
     parser.add_argument('--target-col', default=None)
     parser.add_argument('--n-simulations', type=int, default=5000)
+    parser.add_argument('--boundary-version', default=os.environ.get("BOUNDARY_VERSION", os.environ.get("PIPELINE_VERSION", "v7")),
+                        help="HSA boundary version (v6, v7, v8)")
 
     args = parser.parse_args()
 
@@ -437,7 +448,7 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if args.target_col is None:
-        args.target_col = default_target_col(args.network)
+        args.target_col = 'diarrheal_count_adjusted' if args.network == 'INF' else 'hypertension_count_adjusted'
 
     print("="*80)
     print("GRAVITY MODEL SENSITIVITY ANALYSIS")
@@ -452,7 +463,7 @@ def main():
     sensitivity_df = run_sensitivity_analysis(fac_df, n_simulations=args.n_simulations)
 
     # Load HSA data for downstream analysis
-    hsa_df = load_hsa_data(out_dir, args.network, args.hsa_mode)
+    hsa_df = load_hsa_data(out_dir, args.network, args.hsa_mode, args.boundary_version)
 
     # Run downstream impact analysis
     bootstrap_df, baseline_r2, baseline_mae = analyze_downstream_impact(

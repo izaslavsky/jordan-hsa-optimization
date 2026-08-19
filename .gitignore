@@ -10,37 +10,26 @@ venv/
 dist/
 build/
 
-# Jupyter
+# Jupyter checkpoints
 .ipynb_checkpoints/
+
+# Track only the named notebooks below; ignore all others
 *.ipynb
-!HSA_v6_FINAL.ipynb
-!Patient_Allocation_Probabilistic.ipynb
-!Generate_Modeling_Dataset.ipynb
-!GEE_Climate_Features_by_Facilities.ipynb
-!GEE_HSA_Weekly_Climate_Lagged.ipynb
+!HSA_FINAL.ipynb
+!Population_Allocation_Probabilistic_v2.ipynb
 !GEE_local_Climate_Features_by_Facilities.ipynb
+!GEE_local_HSA_Daily_Climate.ipynb
 !GEE_local_HSA_Weekly_Climate_Lagged.ipynb
 !GEE_local_HSA_Weekly_Climate_Lagged_chunked.ipynb
-!compare_delineations.ipynb
+!Generate_Modeling_Dataset.ipynb
+!Generate_Daily_Modeling_Dataset.ipynb
 !run_climate_health_modeling.ipynb
-
-# Documentation — only the three public-facing docs are tracked
-*.md
-!README.md
-!SETUP_INSTRUCTIONS.md
-!DATA_FLOW_ANALYSIS.md
 
 # IDEs
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# Generated results (keep synthetic data, ignore generated outputs)
-results/*.csv
-results/*.json
-figures/*.png
-figures/*.pdf
 
 # OS
 .DS_Store
@@ -51,5 +40,45 @@ Thumbs.db
 *.bak
 *~
 
-# Google OAuth credentials
+# Google OAuth credentials — never commit
 client_secrets.json
+
+# Large raster files — download from WorldPop (see README)
+# The two Jordan WorldPop grids are tracked directly; all other tifs are excluded.
+*.tif
+!data/jor_ppp_2020_UNadj.tif
+!data/jor_ppp_2020_constrained.tif
+
+# ── Publication data rules ────────────────────────────────────────────────────
+# Only SYNMOD* files belong in this repo.
+# Real patient data (INF_* and NCD_* without SYNMOD prefix) must never be committed.
+data/INF_*
+data/NCD_*
+data/SYNINF_*
+data/SYNNCD_*
+data/SYNMOD_generation_report.json
+
+# Generated outputs — populated at runtime, not tracked
+out/*
+!out/.gitkeep
+
+# Misc artefacts
+*.zip
+*.xlsx
+
+# ── Documentation rules ───────────────────────────────────────────────────────
+# Public-facing documents only; all others are internal notes.
+*.md
+!README.md
+!DATA_FLOW_ANALYSIS.md
+!SETUP_INSTRUCTIONS.md
+
+# Webinars directory (slide decks, presentation notes — not part of public repo)
+webinars/
+
+# Manuscript, generated figures, and manuscript-support scripts
+manuscript/
+generate_figures.py
+
+# Pipeline runner artifacts — executed notebooks and logs, populated at runtime
+_pipeline_runs/

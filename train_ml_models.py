@@ -79,16 +79,19 @@ warnings.filterwarnings('ignore')
 # Directories
 
 # Input files (network/mode aware)
+DEFAULT_PIPELINE_OUT_DIR = os.environ.get("HSA_OUT_DIR", os.environ.get("PIPELINE_OUT_DIR", "out"))
 DEFAULT_RANDOM_SEED = 42
 
 parser = argparse.ArgumentParser(description="Train ML models for climate-health modeling")
 parser.add_argument("--network", default=os.environ.get("NETWORK", "INF"))
 parser.add_argument("--hsa-mode", default=os.environ.get("HSA_MODE", "footprint"))
 parser.add_argument("--target-col", default=os.environ.get("TARGET_COL", "diarrheal_count_adjusted"))
-parser.add_argument("--data-dir", default=os.environ.get("MODEL_DATA_DIR", "out/modeling"))
-parser.add_argument("--output-dir", default=os.environ.get("MODEL_OUTPUT_DIR", "out/modeling/results"))
+parser.add_argument("--data-dir", default=os.environ.get("MODEL_DATA_DIR", str(Path(DEFAULT_PIPELINE_OUT_DIR) / "modeling")))
+parser.add_argument("--output-dir", default=os.environ.get("MODEL_OUTPUT_DIR", str(Path(DEFAULT_PIPELINE_OUT_DIR) / "modeling" / "results")))
 parser.add_argument("--random-seed", type=int, default=int(os.environ.get("RANDOM_SEED", DEFAULT_RANDOM_SEED)),
                     help=f"Random seed for reproducibility (default: {DEFAULT_RANDOM_SEED})")
+parser.add_argument("--boundary-version", default=os.environ.get("BOUNDARY_VERSION", os.environ.get("PIPELINE_VERSION", "v7")),
+                    help="HSA boundary version (v6, v7, v8)")
 args = parser.parse_args()
 NETWORK = args.network
 HSA_MODE = args.hsa_mode
@@ -97,15 +100,16 @@ DATA_DIR = Path(args.data_dir)
 OUTPUT_DIR = Path(args.output_dir)
 OUTPUT_DIR.mkdir(exist_ok=True, parents=True)
 RANDOM_SEED = args.random_seed
+BOUNDARY_VERSION = args.boundary_version
 
-train_candidate = DATA_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_train.csv"
-val_candidate = DATA_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_val.csv"
-test_candidate = DATA_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_test.csv"
+train_candidate = DATA_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_{BOUNDARY_VERSION}_train.csv"
+val_candidate = DATA_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_{BOUNDARY_VERSION}_val.csv"
+test_candidate = DATA_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_{BOUNDARY_VERSION}_test.csv"
 
 TRAIN_FILE = train_candidate if train_candidate.exists() else DATA_DIR / "modeling_dataset_train.csv"
 VAL_FILE = val_candidate if val_candidate.exists() else DATA_DIR / "modeling_dataset_val.csv"
 TEST_FILE = test_candidate if test_candidate.exists() else DATA_DIR / "modeling_dataset_test.csv"
-metadata_candidate = DATA_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_metadata.json"
+metadata_candidate = DATA_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_{BOUNDARY_VERSION}_metadata.json"
 METADATA_FILE = metadata_candidate if metadata_candidate.exists() else DATA_DIR / "modeling_dataset_metadata.json"
 np.random.seed(RANDOM_SEED)
 
@@ -156,7 +160,7 @@ def load_datasets():
         val = pd.read_csv(VAL_FILE)
         test = pd.read_csv(TEST_FILE)
     else:
-        full_candidate = DATA_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset.csv"
+        full_candidate = DATA_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_{BOUNDARY_VERSION}.csv"
         full_fallback = DATA_DIR / "modeling_dataset.csv"
         source_path = full_candidate if full_candidate.exists() else full_fallback
 
@@ -169,7 +173,7 @@ def load_datasets():
         full_df = pd.read_csv(source_path)
         train, val, test = create_temporal_splits(full_df)
 
-        # Save splits for reuse
+        # Save versioned splits for reuse
         train.to_csv(train_candidate, index=False)
         val.to_csv(val_candidate, index=False)
         test.to_csv(test_candidate, index=False)
@@ -664,9 +668,9 @@ def train_glm_models(X_train, y_train, X_val, y_val, X_test, y_test, feature_nam
 
     try:
         # Add intercept
-        X_train_sm = sm.add_constant(X_train_scaled)
-        X_val_sm = sm.add_constant(X_val_scaled)
-        X_test_sm = sm.add_constant(X_test_scaled)
+        X_train_sm = sm.add_constant(X_train_scaled, has_constant='add')
+        X_val_sm = sm.add_constant(X_val_scaled, has_constant='add')
+        X_test_sm = sm.add_constant(X_test_scaled, has_constant='add')
 
         # Fit NB model
         nb_model = sm.GLM(y_train, X_train_sm, family=sm.families.NegativeBinomial())
