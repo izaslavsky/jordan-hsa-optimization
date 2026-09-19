@@ -645,12 +645,16 @@ def main():
     parser.add_argument('--output-dir', default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / 'analysis_variance_decomposition'))
     parser.add_argument('--text-output-dir', default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / 'textresults'))
     parser.add_argument('--target-col', default=None, help='Target column name')
+    parser.add_argument('--disease-focus', default=None, help='Disease-group focus; resolved to the outcome column via the authoritative table, never hardcoded')
 
     args = parser.parse_args()
 
     # Set defaults based on network
     if args.target_col is None:
-        args.target_col = 'diarrheal_count_adjusted' if args.network == 'INF' else 'hypertension_count_adjusted'
+        if not args.disease_focus:
+            parser.error('--target-col or --disease-focus is required (resolved to the outcome column; no hardcoded default)')
+        from disease_focus import canonical_group, weekly_outcome_col
+        args.target_col = weekly_outcome_col(canonical_group(args.network, args.disease_focus))
 
     if args.input_csv is None:
         args.input_csv = str(Path(DEFAULT_PIPELINE_OUT_DIR) / 'modeling' / f'{args.network}_{args.hsa_mode}_modeling_dataset.csv')

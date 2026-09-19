@@ -33,22 +33,18 @@ Phase 2 — run AFTER HSA boundaries exist (output of Step 1):
                 Aggregates daily climate per HSA polygon.
                 Prereq for Step 5.
 
-    python run_pipeline.py ... --only-steps 3,4,5
-                Steps 3–5: build weekly and daily panels and run the
-                weekly models.
-
-    python run_dlnm_primary_sensitivity.py
-                Runs the publication daily DLNM after Step 5 succeeds.
+    python run_pipeline.py ... --only-steps 3,4,5,6
+                Steps 3–6: build datasets and run all models.
 
 If you run the script without --only-steps, it will execute steps 1
-and 2, then skip 3 and 5 (GEE outputs missing) and run step 4 with
+and 2, then skip 3 and 5 (GEE outputs missing) and run 4 and 6 with
 whatever data is already present — which is usually not what you want.
 ---------------------------------------------------------------------
 
 Usage:
     # Phase 1
     python run_pipeline.py \\
-        --network SYNMODINF --hsa-mode footprint \\
+        --network INF --hsa-mode footprint \\
         --boundary-version v7 --disease-focus diarrheal \\
         --study-start 2022-07-01 --study-end 2024-01-31 \\
         --week-start 2019-01-07 --week-end 2024-01-29 \\
@@ -59,14 +55,12 @@ Usage:
 
     # Phase 2
     python run_pipeline.py \\
-        --network SYNMODINF --hsa-mode footprint \\
+        --network INF --hsa-mode footprint \\
         --boundary-version v7 --disease-focus diarrheal \\
         --study-start 2022-07-01 --study-end 2024-01-31 \\
         --week-start 2019-01-07 --week-end 2024-01-29 \\
         --ml-start-date 2022-06-27 --ml-end-date 2024-01-29 \\
-        --only-steps 3,4,5
-
-    python run_dlnm_primary_sensitivity.py
+        --only-steps 3,4,5,6
 """
 
 import argparse
@@ -174,7 +168,14 @@ STEPS = [
         "notebook":  "Generate_Daily_Modeling_Dataset.ipynb",
         "desc":      "Daily climate-health panel with 14-day lag matrix",
         "gee_prereq": "daily_climate",
-        "params":    ["NETWORK", "HSA_MODE", "BOUNDARY_VERSION", "STUDY_START", "STUDY_END"],
+        "params":    ["NETWORK", "HSA_MODE", "BOUNDARY_VERSION", "DISEASE_FOCUS", "STUDY_START", "STUDY_END"],
+    },
+    {
+        "num":       6,
+        "name":      "Daily DLNM models",
+        "notebook":  "run_climate_models_daily.ipynb",
+        "desc":      "Quasi-Poisson DLNM (Track A) and multi-horizon predictive (Track B)",
+        "params":    ["NETWORK", "HSA_MODE", "BOUNDARY_VERSION", "DISEASE_FOCUS"],
     },
 ]
 
@@ -188,7 +189,15 @@ def _gee_outputs_exist(out_dir: Path, network: str, boundary_version: str) -> di
     # Climate features CSV — produced by GEE_local_Climate_Features_by_Facilities
     cf_candidates = list(out_dir.glob(f"{network}_Facilities_Climate_Features*.csv"))
     if not cf_candidates:
-        cf_candidates = list((BASE_DIR / "out").glob(f"{network}_Facilities_Climate_Features*.csv"))
+        # Facility climate is a shared input (GEE Step A, before any delineation),
+        # so falling back to out/ is legitimate. Say so: preflight would otherwise
+        # report OK while the notebooks, which resolve everything from the run
+        # directory, go on to fail on a file preflight found somewhere else.
+        cf_candidates = list((BASE_DIR / "out").glob(f"{network}_Facilities_Climate_Features*.csv"))  # noqa: hardcode - shared GEE Step A input
+        if cf_candidates:
+            print(f"  [note] {network} facility climate not in {out_dir}; found in out/. "
+                  f"Copy it into the run directory before running:")
+            print(f"         cp out/{cf_candidates[0].name} {out_dir}/")
 
     # Weekly climate dir — produced by GEE_local_HSA_Weekly_Climate_Lagged
     weekly_dir = out_dir / f"DRIVE_CLIMATE_BY_HSA_DOWNLOAD_{ver}" / "FINAL_HSA_CLIMATE"
@@ -336,9 +345,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
-    parser.add_argument("--network",          default="SYNMODINF",
-                        help="Network prefix, e.g. SYNMODINF or SYNMODNCD "
-                             "(default: SYNMODINF)")
+    parser.add_argument("--network",          default="INF",
+                        help="Network prefix: INF or NCD  (default: INF)")
     parser.add_argument("--hsa-mode",         default="footprint",
                         help="HSA mode, e.g. footprint  (default: footprint)")
     parser.add_argument("--boundary-version", default="v7",
@@ -370,18 +378,29 @@ def main():
                         help="Comma-separated step numbers to run, e.g. 3,4")
     parser.add_argument("--timeout",          type=int, default=7200,
                         help="Per-notebook execution timeout in seconds (default: 7200)")
+    parser.add_argument("--preflight",        action="store_true",
+                        help="Validate all inputs for the selected steps and exit without running. "
+                             "Reports every missing prerequisite at once.")
     args = parser.parse_args()
 
     NETWORK          = args.network
     HSA_MODE         = args.hsa_mode
     BOUNDARY_VERSION = args.boundary_version
-    DISEASE_FOCUS    = (
-        args.disease_focus
-        or ("diarrheal" if NETWORK.upper().endswith("INF") else "hypertension")
-    )
+    # Resolve the focus to the canonical group slug via the authoritative table;
+    # no hardcoded network default. Threaded to every step as DISEASE_FOCUS.
+    from disease_focus import canonical_group, slug
+    if not args.disease_focus:
+        parser.error("--disease-focus is required (e.g. 'Diarrheal Diseases' or "
+                     "'Hypertension', or a keyword); there is no hardcoded default.")
+    DISEASE_FOCUS    = slug(canonical_group(NETWORK, args.disease_focus))
     OUT_DIR = Path(args.out_dir)
     if not OUT_DIR.is_absolute():
         OUT_DIR = BASE_DIR / OUT_DIR
+    # Propagate the chosen output directory to every notebook kernel and the
+    # scripts they launch (they read OUT_ROOT from HSA_OUT_DIR/PIPELINE_OUT_DIR).
+    # Without this, --out-dir is silently ignored for notebook steps.
+    os.environ["HSA_OUT_DIR"] = str(OUT_DIR)
+    os.environ["PIPELINE_OUT_DIR"] = str(OUT_DIR)
 
     params = {
         "NETWORK":          NETWORK,
@@ -422,6 +441,59 @@ def main():
         status = "OK" if ok else "MISSING — run the corresponding GEE notebook first"
         print(f"    {'[OK]' if ok else '[--]'} {key}: {status}")
     print()
+
+    # ── Preflight: validate every input the selected steps need, at once ──────
+    selected_nums = [s["num"] for s in STEPS
+                     if not (only and s["num"] not in only) and s["num"] not in skip]
+    _data = BASE_DIR / "data"
+    checks = []  # (name, ok, path)
+    _pv = next((p for p in (_data / f"{NETWORK}_patient_visits.csv",
+                            _data / f"SYN{NETWORK}_patient_visits.csv",
+                            _data / f"SYNMOD{NETWORK}_patient_visits.csv") if p.exists()), None)
+    checks.append(("patient visits", _pv is not None, _pv or _data / f"{NETWORK}_patient_visits.csv"))
+    _grp = next((p for p in (_data / f"{NETWORK}_groups_of_diagnoses.csv",
+                             _data / f"SYNMOD{NETWORK}_groups_of_diagnoses.csv") if p.exists()), None)
+    checks.append(("groups_of_diagnoses", _grp is not None, _grp or _data / f"{NETWORK}_groups_of_diagnoses.csv"))
+    try:
+        from disease_focus import canonical_group as _cg
+        _cg(NETWORK, args.disease_focus)
+        checks.append(("disease-focus resolves", True, args.disease_focus))
+    except Exception as _e:
+        checks.append((f"disease-focus resolves ({_e})", False, args.disease_focus))
+    if any(n >= 2 for n in selected_nums):
+        _geo = OUT_DIR / f"{NETWORK}_{HSA_MODE}_hsas_{BOUNDARY_VERSION}.geojson"
+        checks.append(("HSA boundaries geojson", _geo.exists(), _geo))
+    if any(n >= 3 for n in selected_nums):
+        # Step 2 writes this. Requiring it when step 2 is part of the same run
+        # fails a legitimate fresh run before anything has had a chance to
+        # produce it, so only insist on it when step 2 is not selected.
+        _pa = OUT_DIR / f"pixel_allocations_{NETWORK}_{HSA_MODE}_{BOUNDARY_VERSION}.csv"
+        if 2 not in selected_nums:
+            checks.append(("pixel allocations", _pa.exists(), _pa))
+        else:
+            checks.append(("pixel allocations (step 2 will write it)", True, _pa))
+        _wk = OUT_DIR / f"DRIVE_CLIMATE_BY_HSA_DOWNLOAD_{BOUNDARY_VERSION.upper()}" / "FINAL_HSA_CLIMATE"
+        checks.append(("weekly climate dir", _wk.exists() and any(_wk.glob("*.csv")), _wk))
+    if any(n >= 5 for n in selected_nums):
+        _dl = OUT_DIR / f"DRIVE_CLIMATE_BY_HSA_DOWNLOAD_DAILY_{BOUNDARY_VERSION.upper()}"
+        checks.append(("daily climate dir", _dl.exists() and any(_dl.rglob("*.csv")), _dl))
+
+    _missing = [(n, p) for (n, ok, p) in checks if not ok]
+    if args.preflight or _missing:
+        print("  Preflight (inputs for steps "
+              f"{sorted(selected_nums)}):")
+        for name, ok, path in checks:
+            print(f"    {'[OK]' if ok else '[MISSING]'} {name}: {path}")
+        print()
+    if args.preflight:
+        if _missing:
+            print(f"Preflight FAILED: {len(_missing)} missing input(s). Nothing was run.")
+            sys.exit(1)
+        print("Preflight PASSED: all inputs present. (Use without --preflight to run.)")
+        sys.exit(0)
+    if _missing:
+        print(f"WARNING: {len(_missing)} preflight input(s) missing; steps will likely fail. "
+              f"Re-run with --preflight to see the full list.\n")
 
     failed   = []
     skipped  = []

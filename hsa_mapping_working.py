@@ -80,6 +80,10 @@ def create_hsa_map(
     network='INF',
     target_crs='EPSG:4326',
     hsa_polygons=None,
+    ax=None,
+    show_axes=True,
+    show_legend=True,
+    show_title=True,
 ):
     """
     Create a single HSA map with all layers properly styled.
@@ -134,8 +138,12 @@ def create_hsa_map(
     else:
         hsa_circles = hsa_circles_outline
 
-    # Create figure
-    fig, ax = plt.subplots(1, 1, figsize=(16, 12))
+    # Create figure, unless the caller supplied an axis to draw into
+    # (panel figures pass their own axis so several modes share one canvas).
+    if ax is None:
+        fig, ax = plt.subplots(1, 1, figsize=(16, 12))
+    else:
+        fig = ax.figure
 
     # 1. Plot population raster (black-gray background) - WORKING VERSION
     with rasterio.open(pop_raster_path) as src:
@@ -199,11 +207,16 @@ def create_hsa_map(
     ax.set_aspect('equal', adjustable='box')
 
     # Labels and title
-    ax.set_xlabel('Longitude (°E)', fontsize=11)
-    ax.set_ylabel('Latitude (°N)', fontsize=11)
+    if show_axes:
+        ax.set_xlabel('Longitude (°E)', fontsize=11)
+        ax.set_ylabel('Latitude (°N)', fontsize=11)
+    else:
+        ax.set_xticks([])
+        ax.set_yticks([])
 
-    title_text = f"{mode_title} - {network} Network ({len(facilities_hsa)} HSAs)"
-    ax.set_title(title_text, fontsize=13, fontweight='bold', pad=10)
+    if show_title:
+        title_text = f"{mode_title} - {network} Network ({len(facilities_hsa)} HSAs)"
+        ax.set_title(title_text, fontsize=13, fontweight='bold', pad=10)
 
     # Grid
     ax.grid(True, alpha=0.3, linestyle=':', linewidth=0.5, color='gray', zorder=0)
@@ -222,13 +235,15 @@ def create_hsa_map(
         mpatches.Patch(facecolor='gray', alpha=0.5, label='Population Density'),
     ]
 
-    legend = ax.legend(handles=legend_elements, loc='upper right', fontsize=10,
-                      frameon=True, framealpha=1.0, edgecolor='black',
-                      facecolor='white', shadow=True)
-    legend.get_frame().set_facecolor('white')
-    legend.get_frame().set_alpha(1.0)
+    if show_legend:
+        legend = ax.legend(handles=legend_elements, loc='upper right', fontsize=10,
+                          frameon=True, framealpha=1.0, edgecolor='black',
+                          facecolor='white', shadow=True)
+        legend.get_frame().set_facecolor('white')
+        legend.get_frame().set_alpha(1.0)
 
-    plt.tight_layout()
+    if ax.figure is fig and show_axes:
+        plt.tight_layout()
 
     # Save if output path provided
     if output_path:

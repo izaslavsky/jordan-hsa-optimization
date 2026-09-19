@@ -2,12 +2,12 @@
 ML Dataset Preparation Script
 ==============================
 
-Purpose: Merge versioned HSA climate files with
+Purpose: Merge climate data (102 CSV files: 6 variables × 17 HSAs) with
          diarrheal disease data to create a unified dataset for machine
          learning modeling.
 
 Strategy:
-    - Preserve all available HSAs whenever data completeness permits
+    - Prioritize keeping all 17 HSAs (national coverage)
     - Filter to valid date range: 2022-06-27 to 2024-01-29 (84 weeks)
     - Drop variables with >40% missing (NaN/null) data
     - Preserve remaining missing values for modeling-phase imputation
@@ -37,6 +37,7 @@ import pandas as pd
 import numpy as np
 import json
 import os
+import sys
 import argparse
 from pathlib import Path
 from datetime import datetime
@@ -60,8 +61,7 @@ DEFAULT_CORRELATION_THRESHOLD = 0.95  # Remove highly correlated features (r > 0
 # Study period dates have no hardcoded defaults; they must be passed via --start-date
 # and --end-date (or START_DATE/END_DATE env vars) from the calling notebook.
 
-def _default_disease(network):
-    return "diarrheal" if network in ("INF", "SYN") else "hypertension"
+from disease_focus import canonical_group, slug
 
 # Climate file suffixes (fixed structure from GEE exports)
 CLIMATE_SUFFIXES = [
@@ -107,10 +107,13 @@ def parse_args():
                         help="Disease focus (e.g., diarrheal, hypertension)")
     parser.add_argument("--out-dir", default=os.environ.get("HSA_OUT_DIR", os.environ.get("PIPELINE_OUT_DIR", DEFAULT_PIPELINE_OUT_DIR)),
                         help="Pipeline output directory containing weekly disease count files")
-    parser.add_argument("--climate-dir", default=os.environ.get("CLIMATE_DIR", DEFAULT_CLIMATE_DIR),
-                        help=f"Directory containing climate CSV files (default: {DEFAULT_CLIMATE_DIR})")
-    parser.add_argument("--output-dir", default=os.environ.get("OUTPUT_DIR", DEFAULT_OUTPUT_DIR),
-                        help=f"Output directory for modeling dataset (default: {DEFAULT_OUTPUT_DIR})")
+    # Left unset so it can be derived from --out-dir below. Giving it a concrete
+    # default here pinned it to the directory resolved at import time, which
+    # made --out-dir silently not move where climate is read from.
+    parser.add_argument("--climate-dir", default=os.environ.get("CLIMATE_DIR"),
+                        help=f"Directory containing climate CSV files (default: derived from --out-dir, e.g. {DEFAULT_CLIMATE_DIR})")
+    parser.add_argument("--output-dir", default=os.environ.get("OUTPUT_DIR"),
+                        help=f"Output directory for modeling dataset (default: derived from --out-dir, e.g. {DEFAULT_OUTPUT_DIR})")
     parser.add_argument("--missing-threshold", type=float,
                         default=float(os.environ.get("MISSING_THRESHOLD", DEFAULT_MISSING_THRESHOLD)),
                         help=f"Drop features with missing data above this fraction (default: {DEFAULT_MISSING_THRESHOLD})")
@@ -467,12 +470,23 @@ def main():
     # Set all globals from arguments
     NETWORK = args.network
     HSA_MODE = args.hsa_mode
-    DISEASE_FOCUS = args.disease_focus or _default_disease(NETWORK)
+    if not args.disease_focus:
+        print("ERROR: --disease-focus is required (no hardcoded default); pass the "
+              "group label (e.g. 'Diarrheal Diseases') or a keyword.", file=sys.stderr)
+        sys.exit(1)
+    # Resolve to the canonical group slug; column names are derived, never hardcoded.
+    DISEASE_FOCUS = slug(canonical_group(NETWORK, args.disease_focus))
     TARGET_COL = f"{DISEASE_FOCUS}_count_adjusted"
-    # If --climate-dir was not explicitly provided, derive it from boundary_version
-    # so that the default follows the versioned directory layout.
-    if args.climate_dir == DEFAULT_CLIMATE_DIR and args.boundary_version != DEFAULT_BOUNDARY_VERSION:
-        args.climate_dir = str(Path(args.out_dir) / f"DRIVE_CLIMATE_BY_HSA_DOWNLOAD_{args.boundary_version.upper()}" / "FINAL_HSA_CLIMATE")
+    # Derive from --out-dir whenever the caller did not name a directory outright,
+    # so an isolated run reads and writes entirely inside its own directory.
+    # This previously keyed off boundary_version, so --out-dir had no effect at
+    # the default version and an isolated run silently read out/.
+    if not args.climate_dir:
+        args.climate_dir = str(Path(args.out_dir)
+                               / f"DRIVE_CLIMATE_BY_HSA_DOWNLOAD_{args.boundary_version.upper()}"
+                               / "FINAL_HSA_CLIMATE")
+    if not args.output_dir:
+        args.output_dir = str(Path(args.out_dir) / "modeling")
     CLIMATE_DIR = Path(args.climate_dir)
     OUTPUT_DIR = Path(args.output_dir)
     OUTPUT_DIR.mkdir(exist_ok=True, parents=True)
@@ -510,6 +524,38 @@ def main():
     print(f"  Found {len(hsa_names)} HSAs")
     for i, name in enumerate(hsa_names, 1):
         print(f"    {i:2d}. {name}")
+
+    # The HSA list above comes from whatever climate files sit in CLIMATE_DIR,
+    # and that directory is keyed by network and boundary version but not by HSA
+    # mode. Exports from a second mode, or files left behind by a superseded
+    # delineation, therefore become extra HSAs in the modeling dataset without
+    # any error. Reconcile against the delineation this run is supposed to use.
+    geojson_path = Path(args.out_dir) / f"{NETWORK}_{HSA_MODE}_hsas_{args.boundary_version}.geojson"
+    if geojson_path.exists():
+        import geopandas as gpd
+        anchors = gpd.read_file(geojson_path)
+        name_col = "FacilityName" if "FacilityName" in anchors.columns else "HealthFacility"
+        expected = {clean_facility_name(str(n)) for n in anchors[name_col]}
+        found    = {clean_facility_name(n) for n in hsa_names}
+        stale    = sorted(found - expected)
+        missing  = sorted(expected - found)
+        if stale:
+            print(f"\n  ERROR: {len(stale)} anchor(s) have climate files but are not in")
+            print(f"  {geojson_path.name} ({len(expected)} anchors):")
+            for x in stale:
+                print(f"    - {x}")
+            print("  This directory mixes runs, or holds files from a superseded")
+            print("  delineation. Re-export into an isolated HSA_OUT_DIR, or clear it.")
+            sys.exit(1)
+        if missing:
+            print(f"\n  ERROR: {len(missing)} anchor(s) in {geojson_path.name} have no climate files:")
+            for x in missing:
+                print(f"    - {x}")
+            print(f"  Re-run the weekly GEE export for {NETWORK}-{HSA_MODE}.")
+            sys.exit(1)
+        print(f"  Anchor check: matches {geojson_path.name} exactly ({len(expected)} anchors)")
+    else:
+        print(f"  WARNING: {geojson_path} not found; skipping the anchor cross-check.")
 
     # -------------------------------------------------------------------------
     # STEP 2: Merge climate files for each HSA

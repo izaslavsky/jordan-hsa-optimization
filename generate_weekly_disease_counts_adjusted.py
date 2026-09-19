@@ -23,6 +23,9 @@ from pathlib import Path
 import argparse
 from scipy.spatial import cKDTree
 
+from disease_focus import (canonical_group, group_column, canonicalize_series,
+                           slug, weekly_outcome_col)
+
 def _parse_network_mode(hsa_geojson_path):
     stem = Path(hsa_geojson_path).stem
     # Expected patterns:
@@ -50,11 +53,9 @@ def _parse_network_mode(hsa_geojson_path):
         )
     return network, hsa_mode
 
-def _default_disease(network):
-    return "diarrheal" if network in ("INF", "SYNINF") else "hypertension"
-
 def _secondary_label(network):
-    return "infectious" if network in ("INF", "SYNINF") else "ncd"
+    # Secondary series = all-cause total for the network; labelled by network.
+    return network.lower()
 
 parser = argparse.ArgumentParser(description="Generate adjusted weekly disease counts")
 parser.add_argument("hsa_geojson", nargs="?", default=None)
@@ -79,7 +80,15 @@ else:
     HSA_GEOJSON = input("Enter path to HSA GeoJSON file: ").strip()
 
 NETWORK, HSA_MODE = _parse_network_mode(HSA_GEOJSON)
-DISEASE_FOCUS = (args.disease or os.environ.get("DISEASE_FOCUS") or _default_disease(NETWORK)).lower()
+_focus_arg = args.disease or os.environ.get("DISEASE_FOCUS")
+if not _focus_arg:
+    parser.error("--disease (disease focus) is required; pass the group label "
+                 "(e.g. 'Diarrheal Diseases') or a keyword. No hardcoded default.")
+# Resolve to the canonical group label from the authoritative table; derive a
+# filesystem/column slug. Selection is by group; nothing is hardcoded.
+FOCUS_LABEL = canonical_group(NETWORK, _focus_arg)
+FOCUS_SLUG  = slug(FOCUS_LABEL)
+DISEASE_FOCUS = FOCUS_SLUG          # used in output filenames/columns
 SECONDARY_LABEL = _secondary_label(NETWORK)
 WEEK_START = args.week_start
 WEEK_END = args.week_end
@@ -277,27 +286,13 @@ patients['healthfacility'] = patients['healthfacility'].str.replace('\xa0', ' ')
 
 print(f"  Loaded {len(patients):,} patient records")
 
-def is_target_disease(row):
-    if DISEASE_FOCUS == "diarrheal":
-        diagnosis = row.get('diagnosis')
-        if pd.isna(diagnosis):
-            return False
-        diarrheal_keywords = ['diarrhea', 'diarrhoea', 'gastroenteritis', 'dysentery',
-                              'cholera', 'rotavirus', 'giardia', 'shigella', 'salmonella',
-                              'enteric', 'gastro']
-        return any(kw in str(diagnosis).lower() for kw in diarrheal_keywords)
-    if DISEASE_FOCUS == "hypertension":
-        category = row.get('general_category')
-        if pd.notna(category):
-            return 'hypertension' in str(category).lower()
-        diagnosis = row.get('diagnosis')
-        if pd.isna(diagnosis):
-            return False
-        return 'hypertens' in str(diagnosis).lower()
-    raise ValueError(f"Unsupported disease focus: {DISEASE_FOCUS}")
-
-patients['is_target_disease'] = patients.apply(is_target_disease, axis=1)
-print(f"  Identified {patients['is_target_disease'].sum():,} {DISEASE_FOCUS} cases")
+# Case selection is by the authoritative diagnosis group, canonicalized against
+# the mapping table. No keyword lists, no hardcoded labels.
+_pv_group_col = group_column(patients)
+patients[_pv_group_col] = canonicalize_series(patients[_pv_group_col], NETWORK)
+patients['is_target_disease'] = patients[_pv_group_col].eq(FOCUS_LABEL)
+print(f"  Identified {patients['is_target_disease'].sum():,} '{FOCUS_LABEL}' cases "
+      f"(group-based selection)")
 
 # Assign to weeks
 def get_monday(date):

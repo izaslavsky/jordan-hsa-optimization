@@ -572,8 +572,10 @@ def main():
     parser.add_argument("--hsa-mode", default="footprint")
     parser.add_argument("--data-dir", default="data")
     parser.add_argument("--out-dir", default=DEFAULT_PIPELINE_OUT_DIR)
-    parser.add_argument("--output-dir", default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / "analysis_exclusion"))
-    parser.add_argument("--text-output-dir", default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / "textresults"))
+    # Left unset so they follow --out-dir; a concrete default here would pin them
+    # to the directory resolved at import time and make --out-dir a no-op.
+    parser.add_argument("--output-dir", default=None)
+    parser.add_argument("--text-output-dir", default=None)
     parser.add_argument("--boundary-version", default=os.environ.get("BOUNDARY_VERSION", os.environ.get("PIPELINE_VERSION", "v7")),
                         help="HSA boundary version (v6, v7, v8). Must match the run that produced allocation files.")
     args = parser.parse_args()
@@ -583,6 +585,10 @@ def main():
     HSA_MODE = args.hsa_mode
     DATA_DIR = Path(args.data_dir)
     OUT_DIR = Path(args.out_dir)
+    if args.output_dir is None:
+        args.output_dir = str(OUT_DIR / "analysis_exclusion")
+    if args.text_output_dir is None:
+        args.text_output_dir = str(OUT_DIR / "textresults")
     BOUNDARY_VERSION = args.boundary_version
     ANALYSIS_DIR = Path(args.output_dir)
     OUTPUT_FILE_PREFIX = f"{NETWORK}_{HSA_MODE}"

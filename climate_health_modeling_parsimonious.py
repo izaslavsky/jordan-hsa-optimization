@@ -31,7 +31,7 @@ DEFAULT_RANDOM_SEED = 42
 parser = argparse.ArgumentParser(description="Parsimonious climate-health modeling")
 parser.add_argument("--network", default=os.environ.get("NETWORK", "INF"))
 parser.add_argument("--hsa-mode", default=os.environ.get("HSA_MODE", "footprint"))
-parser.add_argument("--target-col", default=os.environ.get("TARGET_COL", "diarrheal_count_adjusted"))
+parser.add_argument("--target-col", default=os.environ.get("TARGET_COL"))
 parser.add_argument("--input-csv", default=os.environ.get("MODEL_INPUT_CSV", None))
 parser.add_argument("--output-dir", default=os.environ.get("MODEL_OUTPUT_DIR", str(Path(DEFAULT_PIPELINE_OUT_DIR) / "modeling" / "results_parsimonious")))
 parser.add_argument("--output-prefix", default=os.environ.get("MODEL_OUTPUT_PREFIX", None))

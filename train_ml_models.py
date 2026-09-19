@@ -85,7 +85,7 @@ DEFAULT_RANDOM_SEED = 42
 parser = argparse.ArgumentParser(description="Train ML models for climate-health modeling")
 parser.add_argument("--network", default=os.environ.get("NETWORK", "INF"))
 parser.add_argument("--hsa-mode", default=os.environ.get("HSA_MODE", "footprint"))
-parser.add_argument("--target-col", default=os.environ.get("TARGET_COL", "diarrheal_count_adjusted"))
+parser.add_argument("--target-col", default=os.environ.get("TARGET_COL"))
 parser.add_argument("--data-dir", default=os.environ.get("MODEL_DATA_DIR", str(Path(DEFAULT_PIPELINE_OUT_DIR) / "modeling")))
 parser.add_argument("--output-dir", default=os.environ.get("MODEL_OUTPUT_DIR", str(Path(DEFAULT_PIPELINE_OUT_DIR) / "modeling" / "results")))
 parser.add_argument("--random-seed", type=int, default=int(os.environ.get("RANDOM_SEED", DEFAULT_RANDOM_SEED)),
@@ -155,7 +155,17 @@ def load_datasets():
     """Load train/val/test datasets"""
     print("Loading datasets...")
 
-    if TRAIN_FILE.exists() and VAL_FILE.exists() and TEST_FILE.exists():
+    full_candidate = DATA_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_{BOUNDARY_VERSION}.csv"
+    _use_cached = TRAIN_FILE.exists() and VAL_FILE.exists() and TEST_FILE.exists()
+    if _use_cached and full_candidate.exists():
+        # Invalidate stale splits: rebuild if the full dataset is newer than the
+        # cached split, or if the split lacks the target column (e.g. after a
+        # disease-focus/schema change). Prevents reading a prior run's splits.
+        if os.path.getmtime(TRAIN_FILE) < os.path.getmtime(full_candidate):
+            _use_cached = False
+        elif TARGET_COL not in pd.read_csv(TRAIN_FILE, nrows=0).columns:
+            _use_cached = False
+    if _use_cached:
         train = pd.read_csv(TRAIN_FILE)
         val = pd.read_csv(VAL_FILE)
         test = pd.read_csv(TEST_FILE)

@@ -1,152 +1,321 @@
-# Hospital Service Area Optimization and Climate–Health Analysis
+# Hospital Service Area Optimization and Climate-Health Analysis — v2
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 
-Code and public/synthetic data accompanying the GeoHealth manuscript on delineating hospital service areas (HSAs) when patient residence data are unavailable. The workflow combines facility locations and patient volumes, gridded population, administrative boundaries, satellite climate products, probabilistic population allocation, and climate–health models.
+Code and synthetic data accompanying the research paper on delineating Hospital Service Areas (HSAs) using patient trajectory data and analyzing climate-health relationships in Jordan. This is **v2** of the repository, which adds three algorithm variants for HSA boundary delineation, a daily climate-health epidemiological pipeline, and a DLNM cross-basis module. The original repository (`jordan-hsa-optimization`) retains the v6 baseline algorithm and weekly modeling pipeline.
 
-The publication analysis uses the **version 7 INF-FOOTPRINT configuration**. Version 6 is the original greedy solution; version 7 adds anchor promotion/demotion quality control; version 8 additionally creates satellite-bubble boundaries. `HSA_FINAL.ipynb` generates all three boundary bundles so that downstream sensitivity analyses can select a version explicitly.
+---
 
-## Public data and privacy
+## Reproducibility
 
-The repository contains only:
+Applying this pipeline to another facility network or another disease is a
+configuration change, not a code change. Disease groups, outcome column names
+and file naming are resolved at run time from the network's
+`groups_of_diagnoses` table, so nothing disease-specific is written into the
+scripts. Each network, optimization mode and boundary version writes to its own
+directory, and results for each disease are kept separate beneath it, so two
+diseases or two modes can never overwrite one another.
 
-- synthetic patient datasets whose names begin with `SYNMODINF_` or `SYNMODNCD_`;
-- public administrative boundary files;
-- public WorldPop population rasters;
-- public calendar, reporting-gap, sanitation, and derived HSA-metadata tables.
+Four checks are executable and exit non-zero on failure, so an audit is one
+command rather than an inspection:
 
-Real patient data are not included. `.gitignore` blocks filenames beginning with `data/INF_` or `data/NCD_`, credentials, generated outputs, and unlisted notebooks. The synthetic files reproduce the pipeline structure and selected statistical properties but must not be used as substitutes for real outcome data in substantive epidemiological inference.
+```bash
+python check_no_hardcoding.py --root .      # no hardcoded disease label or output path
+python check_hsa_overlap.py --out-dir <run> --version v7   # no near-duplicate service areas
+python check_pipeline_outputs.py --network INF --mode footprint --out-dir <run>
+python check_pipeline_outputs.py --all      # every run present
+```
 
-## Repository contents
+`check_pipeline_outputs.py` reconciles a run against its own delineation: every
+anchor has climate and no others do, every derived file is newer than the
+delineation, allocation and climate it was built from, and nothing in the
+directory predates the delineation. Matching file counts is not sufficient —
+several defects found during development produced the right number of files
+with the wrong membership.
 
-```text
-Jordan-hsa-optimization/
+## What is new in v2
+
+### Three HSA algorithm variants
+
+`HSA_FINAL.ipynb` runs all three variants in a single execution and writes versioned boundary bundles:
+
+| Bundle | Algorithm | Key additions |
+|--------|-----------|---------------|
+| **v6** | Greedy multi-objective optimization only | Baseline — no post-selection corrections |
+| **v7** | v6 + anchor quality-control | Weak anchors replaced by stronger nearby facilities; major hospitals without a plausible fallback promoted to anchors |
+| **v8** | v7 + satellite bubble boundaries | HSA polygons union the anchor catchment with smaller secondary catchments around eligible nearby facilities |
+
+All downstream notebooks select a bundle via `BOUNDARY_VERSION = "v6" | "v7" | "v8"` near the top of each notebook.
+
+### Daily climate-health pipeline
+
+A second modeling track built on daily data:
+
+- `GEE_local_HSA_Daily_Climate.ipynb` extracts daily climate from Google Earth Engine (CHIRPS + ERA5-Land) for each HSA polygon.
+- `generate_daily_disease_counts.py` produces daily diarrheal case counts per HSA from patient visit records.
+- `prepare_daily_modeling_dataset.py` assembles a daily panel with 14-day climate lags and infrastructure covariates.
+- `Generate_Daily_Modeling_Dataset.ipynb` orchestrates these steps.
+- `run_climate_models_daily.ipynb` runs two modeling tracks:
+  - **Track A**: Explanatory quasi-Poisson DLNM — tests whether climate associations are modified by sanitation/infrastructure quality.
+  - **Track B**: Predictive OLS at five forecast horizons.
+
+See `DATA_FLOW_ANALYSIS.md` for end-to-end pipeline description.
+
+### DLNM module
+
+`dlnm/dlnm_crossbasis.py` implements distributed lag non-linear models in Python: natural cubic spline cross-basis construction, quasi-Poisson GLM fitting, and cumulative relative risk computation. Import with `from dlnm.dlnm_crossbasis import ns_basis, build_crossbasis, cumulative_rr`.
+
+### Improved population allocation
+
+`Population_Allocation_Probabilistic_v2.ipynb` (using updated `population_allocation.py`) replaces the previous nearest-anchor fallback with an admissibility-limited fallback: facilities outside all HSA radii are assigned only to anchors within a distance limit derived from the anchor's service radius, with same-governorate preference for major facilities. Facilities that fail the admissibility check are reported rather than silently attached to a distant anchor.
+
+---
+
+## Repository structure
+
+```
+jordan-hsa-optimization_v2/
 ├── data/
-│   ├── SYNMODINF_*.csv
-│   ├── SYNMODNCD_*.csv
-│   ├── adm_boundaries/*.gpkg
+│   ├── adm_boundaries/              Administrative boundaries (governorate/district/subdistrict)
+│   ├── SYNMODINF_facility_coordinates.csv   INF facility locations
+│   ├── SYNMODINF_groups_of_diagnoses.csv    ICD groupings for INF network
+│   ├── SYNMODINF_patient_visits.csv         Synthetic INF patient visits (2019–2024)
+│   ├── SYNMODNCD_facility_coordinates.csv   NCD facility locations
+│   ├── SYNMODNCD_groups_of_diagnoses.csv    ICD groupings for NCD network
+│   ├── SYNMODNCD_patient_visits.csv         Synthetic NCD patient visits
 │   ├── jordan_boundary.gpkg
 │   ├── jordan_governorates.gpkg
-│   ├── jor_ppp_2020_UNadj.tif
-│   ├── jor_ppp_2020_constrained.tif
-│   ├── jmp_2025_jordan_governorate.csv
-│   ├── hsa_metadata.csv
-│   ├── jordan_islamic_calendar.csv
-│   └── reporting_gaps.csv
-├── dlnm/
-│   ├── __init__.py
-│   └── dlnm_crossbasis.py
-├── out/.gitkeep
-├── HSA_FINAL.ipynb
+│   └── hsa_metadata.csv                     JMP sanitation quality scores per HSA
+│   [WorldPop rasters not included — see Installation below]
+├── dlnm/                            DLNM cross-basis module
+├── out/                             Delineation masters from HSA_FINAL (gitignored)
+├── out_<NETWORK>_<mode>_<version>/  One directory per run (gitignored). Holds the
+│   │                                delineation, gravity allocation and per-HSA
+│   │                                climate, which depend on network/mode/version
+│   │                                only and are shared across diseases.
+│   └── <disease_slug>/              Everything specific to one disease: counts,
+│                                    modeling datasets, model results, sensitivity
+├── HSA_FINAL.ipynb                  HSA delineation (produces v6, v7, v8 bundles)
 ├── Population_Allocation_Probabilistic_v2.ipynb
 ├── GEE_local_Climate_Features_by_Facilities.ipynb
+├── GEE_local_HSA_Daily_Climate.ipynb
 ├── GEE_local_HSA_Weekly_Climate_Lagged.ipynb
 ├── GEE_local_HSA_Weekly_Climate_Lagged_chunked.ipynb
-├── GEE_local_HSA_Daily_Climate.ipynb
 ├── Generate_Modeling_Dataset.ipynb
 ├── Generate_Daily_Modeling_Dataset.ipynb
 ├── run_climate_health_modeling.ipynb
-├── run_dlnm_primary_sensitivity.py
-├── run_pipeline.py
-├── 08_climate_ar_decomposition.py … 16_within_hsa_heterogeneity.py
-├── supporting Python modules
-├── requirements.txt
+├── run_climate_models_daily.ipynb
+├── compare_delineations.ipynb
+├── dlnm/
+│   └── dlnm_crossbasis.py               Natural spline cross-basis and cumulative RR
+├── hsa_optimization.py                  Core algorithm (v6/v7/v8 via flags)
+├── generate_hsa_metadata.py             Build data/hsa_metadata.csv from coordinates + JMP 2025 lookup
+├── hsa_mapping_working.py               HSA visualization helpers
+├── hsa_objective_analysis.py            Objective function diagnostics
+├── population_allocation.py             Probabilistic gravity allocation
+├── generate_diagnosis_counts_v2.py      Diagnosis grouping from visit records
+├── generate_weekly_disease_counts_adjusted.py
+├── prepare_ml_dataset.py                Weekly modeling dataset assembly
+├── generate_daily_disease_counts.py
+├── prepare_daily_modeling_dataset.py    Daily panel with climate lags
+├── climate_health_modeling.py           Weekly climate-health models (called by notebook)
+├── climate_health_modeling_comprehensive.py
+├── climate_health_modeling_parsimonious.py
+├── climate_health_modeling_anomalies.py
+├── train_improved_models.py
+├── train_ml_models.py
+├── 08_climate_ar_decomposition.py       Supplementary analyses (08–16)
+├── ...
+├── 16_within_hsa_heterogeneity.py
+├── README.md
 ├── DATA_FLOW_ANALYSIS.md
 └── SETUP_INSTRUCTIONS.md
 ```
 
-`out/` is intentionally empty in Git except for `.gitkeep`; all generated boundaries, intermediate panels, model results, figures, and run metadata are written there.
+---
+
+## Synthetic data
+
+`SYNMOD` files preserve the statistical properties of the real data, including temporal structure, seasonal patterns, and diagnosis-category distributions. Facility coordinates and ICD groupings are identical to the real data. Patient IDs and specific visit records are synthetic.
+
+**Caveat**: Climate associations and explanatory DLNM results using SYNMOD data should be treated as pipeline validation, not scientific findings. Real outcome data is required for substantive inference.
+
+---
 
 ## Installation
 
 ```bash
-git clone https://github.com/izaslavsky/Jordan-hsa-optimization.git
-cd Jordan-hsa-optimization
-python3 -m venv venv
-source venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -r requirements.txt
+git clone <repo-url>
+cd jordan-hsa-optimization_v2
+pip install -r requirements.txt
+earthengine authenticate   # required for GEE notebooks
 ```
 
-Earth Engine and Google Drive setup is described in `SETUP_INSTRUCTIONS.md`.
+### WorldPop rasters
 
-## Reproducing the workflow
+The population rasters are not committed (too large). Download them from WorldPop and place in `data/`:
 
-The workflow has two phases because Earth Engine exports require an authenticated, interactive step.
+| File | URL |
+|------|-----|
+| `jor_ppp_2020_UNadj.tif` | https://www.worldpop.org — Jordan 2020 unconstrained |
+| `jor_ppp_2020_constrained.tif` | https://www.worldpop.org — Jordan 2020 constrained |
 
-### Phase 1: facility climate, HSA delineation, and population allocation
+---
 
-1. Run `GEE_local_Climate_Features_by_Facilities.ipynb` and save its CSV in `out/`.
-2. Run the first two local pipeline steps:
+## Running the pipeline
+
+Steps 1 and 2 run once. Steps 3 onward carry a `BOUNDARY_VERSION` parameter and can be run three times (v6, v7, v8) to produce results for all boundary variants.
+
+### Step 1 — Climate features by facility
 
 ```bash
-python run_pipeline.py \
-  --network SYNMODINF \
-  --hsa-mode footprint \
-  --boundary-version v7 \
-  --disease-focus diarrheal \
-  --only-steps 1,2
+jupyter notebook GEE_local_Climate_Features_by_Facilities.ipynb
 ```
 
-`HSA_FINAL.ipynb` writes versioned HSA boundary bundles; population allocation then assigns each population cell to one admissible HSA using the gravity model.
+Copy the output `{NETWORK}_Facilities_Climate_Features_with_clusters.csv` into `out/`.
 
-### Phase 2: HSA climate, weekly models, and the daily modeling panel
-
-1. Run `GEE_local_HSA_Weekly_Climate_Lagged.ipynb` and `GEE_local_HSA_Daily_Climate.ipynb` for the selected boundary version. Use the chunked weekly notebook if an Earth Engine export exceeds memory limits.
-2. Run the remaining local pipeline steps:
+### Step 2 — HSA delineation (all three variants)
 
 ```bash
-python run_pipeline.py \
-  --network SYNMODINF \
-  --hsa-mode footprint \
-  --boundary-version v7 \
-  --disease-focus diarrheal \
-  --study-start 2022-07-01 \
-  --study-end 2024-01-31 \
-  --week-start 2019-01-07 \
-  --week-end 2024-01-29 \
-  --ml-start-date 2022-06-27 \
-  --ml-end-date 2024-01-29 \
-  --only-steps 3,4,5
+jupyter notebook HSA_FINAL.ipynb
 ```
 
-### Publication DLNM
+Produces 5 boundary files, one per mode: `out/{NETWORK}_{mode}_hsas_v7.geojson`.
+Only v7 is built by default; set `HSA_VARIANTS="v6,v7,v8"` to rebuild the others.
 
-The manuscript-reported daily explanatory analysis is generated by the standalone reproducibility runner, not by an HSA-specific forecasting notebook:
+### Step 3 — Population allocation
+
+Set `BOUNDARY_VERSION = "v6" | "v7" | "v8"` in the notebook, then run:
 
 ```bash
-python run_dlnm_primary_sensitivity.py
+jupyter notebook Population_Allocation_Probabilistic_v2.ipynb
 ```
 
-It fits:
+Repeat for each boundary version.
 
-- a primary quasi-Poisson distributed-lag non-linear model using all 19 v7 INF-FOOTPRINT HSAs; and
-- a sensitivity model retaining the nine HSAs with a mean of at least one diarrheal visit per day.
+### Step 4 — Climate aggregation by HSA
 
-The primary cohort fixes the precipitation spline knots, the median nonzero reference, the 90th-percentile nonzero contrast, and representative sanitation values used in both analyses. Machine-readable outputs are written to `out/modeling/daily_dlnm_primary_sensitivity_v7/`.
+**Weekly** (set `BOUNDARY_VERSION` in the notebook):
 
-## Main algorithm and modeling components
+```bash
+jupyter notebook GEE_local_HSA_Weekly_Climate_Lagged.ipynb
+```
 
-- **HSA construction:** multi-objective greedy facility selection balancing coverage, facility volume, accessibility, spatial overlap, and climatic diversity.
-- **Version 7 refinement:** iterative anchor promotion/demotion and replacement while preserving the population-coverage target.
-- **Population allocation:** gravity-based cell allocation with distance/radius admissibility and major-facility safeguards.
-- **Weekly evaluation:** autoregressive and seasonal baselines, climate-augmented models, anomaly models, and sensitivity analyses.
-- **Daily explanatory evaluation:** a 0–14-day precipitation cross-basis with sanitation effect modification, following the distributed-lag non-linear modeling framework.
+**Daily** (set `BOUNDARY_VERSION` in the notebook):
 
-See `DATA_FLOW_ANALYSIS.md` for exact inputs and outputs at each step.
+```bash
+jupyter notebook GEE_local_HSA_Daily_Climate.ipynb
+```
+
+### Step 5 — Generate modeling dataset
+
+**Weekly** (disease counts + climate merge, set `BOUNDARY_VERSION`):
+
+```bash
+jupyter notebook Generate_Modeling_Dataset.ipynb
+```
+
+**Daily** (disease counts + lag assembly + dataset merge, set `BOUNDARY_VERSION`):
+
+```bash
+jupyter notebook Generate_Daily_Modeling_Dataset.ipynb
+```
+
+Both notebooks call the relevant `.py` helper scripts internally.
+
+### Step 6 — Run models
+
+**Weekly climate-health**:
+
+```bash
+jupyter notebook run_climate_health_modeling.ipynb
+```
+
+**Daily DLNM + predictive**:
+
+```bash
+jupyter notebook run_climate_models_daily.ipynb
+```
+
+### Optional — Compare delineation methods
+
+```bash
+jupyter notebook compare_delineations.ipynb
+```
+
+---
+
+## Workflow diagram
+
+```
+Step 1  GEE_local_Climate_Features_by_Facilities.ipynb   [run once]
+            │
+            ▼
+Step 2  HSA_FINAL.ipynb                                  [run once]
+            │  → out/{NETWORK}_{mode}_hsas_{v6|v7|v8}.geojson
+            │    (v6: greedy | v7: +anchor QC | v8: +bubbles)
+            │
+            ▼
+    ┌── BOUNDARY_VERSION = v6 | v7 | v8 ──┐
+    │  (Steps 3–6 repeat for each version) │
+    └──────────────────────────────────────┘
+            │
+            ▼
+Step 3  Population_Allocation_Probabilistic_v2.ipynb
+            │
+     ┌──────┴────────────────────┐
+     ▼                           ▼
+Step 4 (weekly)           Step 4 (daily)
+GEE_local_HSA_Weekly_     GEE_local_HSA_Daily_
+Climate_Lagged.ipynb      Climate.ipynb
+     │                           │
+     ▼                           ▼
+Step 5 (weekly)           Step 5 (daily)
+Generate_Modeling_        Generate_Daily_Modeling_
+Dataset.ipynb             Dataset.ipynb
+     │                           │
+     ▼                           ▼
+Step 6 (weekly)           Step 6 (daily)
+run_climate_health_       run_climate_models_daily.ipynb
+modeling.ipynb            Track A: DLNM (explanatory)
+                          Track B: OLS horizons (predictive)
+```
+
+---
+
+## Climate data note
+
+Weekly climate CSVs (CHIRPS + ERA5-Land + TerraClimate) and daily climate CSVs (CHIRPS + ERA5-Land) are not committed to the repository. Run the corresponding GEE notebook (Step 4) with the desired `BOUNDARY_VERSION` to generate them. The chunked variant `GEE_local_HSA_Weekly_Climate_Lagged_chunked.ipynb` is provided for runs that exceed GEE export memory limits.
+
+The weekly export also emits per-HSA elevation statistics from SRTM: mean, standard deviation, min, max and the 25th/50th/75th percentiles, written as one row per HSA (`*_elevation_by_week.csv`). The spread, not just the mean, is what the within-HSA heterogeneity analysis needs, since an HSA spanning the Jordan Valley and the highlands has a far larger internal climate gradient than a compact urban one. Elevation is produced by the same notebook as the other climate families; there is no separate elevation notebook. To export elevation alone, set `USE_CHIRPS`, `USE_ERA5_HOURLY` and `USE_ERA5_EVP` to `False` and leave `INCLUDE_ELEVATION = True`.
+
+---
+
+## Documentation
+
+| File | Contents |
+|------|----------|
+| `DATA_FLOW_ANALYSIS.md` | End-to-end data flow: inputs, outputs, and commands for each pipeline step |
+| `SETUP_INSTRUCTIONS.md` | GEE and Google Drive credential setup |
+
+---
 
 ## Citation
 
 ```bibtex
-@software{zaslavsky_jordan_hsa_optimization_2026,
+@software{hsa_climate_health_v2_2025,
+  title  = {Hospital Service Area Optimization and Climate-Health Analysis, v2},
   author = {Zaslavsky, Ilya},
-  title  = {Hospital Service Area Optimization and Climate--Health Analysis},
-  year   = {2026},
-  url    = {https://github.com/izaslavsky/Jordan-hsa-optimization}
+  year   = {2025},
+  note   = {Three-variant HSA delineation with daily DLNM epidemiological pipeline}
 }
 ```
 
+---
+
 ## License
 
-MIT License; see `LICENSE`.
+MIT License. See [LICENSE](LICENSE).
+
+**Data licenses**: Administrative boundaries: ODbL (OpenStreetMap). Synthetic patient data: public domain. Climate data: see individual source licenses (CHIRPS, ERA5-Land, TerraClimate, WorldPop).

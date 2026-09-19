@@ -72,22 +72,87 @@ def load_allocation_data(out_dir, network, hsa_mode, sample_size=500000, boundar
 
     print(f"  Loading pixel allocations...")
 
-    # Sample if file is large
-    df = pd.read_csv(alloc_file, nrows=sample_size)
-    print(f"    Loaded {len(df):,} pixels")
+    # nrows= takes the FIRST n rows, and the file is written in spatial order,
+    # so it returned one corner of the country: 43 of 187 facilities. Sample
+    # across the whole file instead.
+    total = sum(1 for _ in open(alloc_file)) - 1
+    if total > sample_size:
+        rng = np.random.default_rng(42)
+        keep = set(rng.choice(np.arange(1, total + 1), size=sample_size, replace=False))
+        df = pd.read_csv(alloc_file, skiprows=lambda i: i > 0 and i not in keep)
+        print(f"    Sampled {len(df):,} of {total:,} pixels (seeded, whole-file)")
+    else:
+        df = pd.read_csv(alloc_file)
+        print(f"    Loaded {len(df):,} pixels")
+
+    # Pixels are allocated to FACILITIES; this analysis is about HSAs. Without
+    # this join it grouped by facility and reported 187 (or, with the biased
+    # head sample, 43) "HSAs" for an 18-anchor delineation.
+    assign = out_dir / f'{network}_{hsa_mode}_facility_hsa_assignments_{boundary_version}.csv'
+    if assign.exists():
+        a = pd.read_csv(assign)[['facility_id', 'primary_hsa']]
+        df = df.merge(a, on='facility_id', how='left')
+        unmapped = int(df['primary_hsa'].isna().sum())
+        if unmapped:
+            print(f"    WARNING: {unmapped:,} pixel(s) have no HSA assignment; dropped")
+            df = df[df['primary_hsa'].notna()]
+        print(f"    Pixels grouped into {df['primary_hsa'].nunique()} HSAs")
+    else:
+        raise FileNotFoundError(
+            f"Facility->HSA assignments missing: {assign}. Without them this "
+            f"analysis groups by facility and does not describe HSAs.")
 
     return df
 
 
-def load_elevation_data(data_dir):
-    """Load elevation data if available."""
-    # Try to find elevation raster
-    elev_files = list(data_dir.glob('*elevation*.tif')) + list(data_dir.glob('*dem*.tif'))
+def load_elevation_data(data_dir, out_dir=None, network=None, boundary_version=None):
+    """Load elevation data if available.
 
+    Preference order:
+      1. per-HSA SRTM statistics exported by GEE_local_HSA_Weekly_Climate_Lagged
+         (elevation_sd_m / min / max), which describe variation inside each HSA;
+      2. a DEM raster in data/;
+      3. nothing, in which case the caller must not silently substitute a
+         modelled surface.
+    """
+    import glob as _glob
+    # Take these from the caller: reading the environment here meant a run
+    # started with --out-dir looked for elevation in out/ and silently fell
+    # back to the modelled surface.
+    out_dir = Path(out_dir) if out_dir is not None else Path(
+        os.environ.get("HSA_OUT_DIR", os.environ.get("PIPELINE_OUT_DIR", "out")))
+    ver = (boundary_version or os.environ.get("BOUNDARY_VERSION", "v7")).upper()
+    net = network or os.environ.get("NETWORK", "INF")
+    pattern = str(out_dir / f"DRIVE_CLIMATE_BY_HSA_DOWNLOAD_{ver}" /
+                  "FINAL_HSA_CLIMATE" / f"{net}_HSA_*_elevation_by_week.csv")
+    files = sorted(_glob.glob(pattern))
+    if files:
+        frames = []
+        for f in files:
+            d = pd.read_csv(f)
+            keep = [c for c in ("FacilityName", "elevation_m", "elevation_sd_m",
+                                "elevation_min_m", "elevation_max_m") if c in d.columns]
+            if "elevation_sd_m" not in keep:
+                continue
+            frames.append(d[keep].drop_duplicates(subset=["FacilityName"]))
+        if frames:
+            stats = pd.concat(frames, ignore_index=True).drop_duplicates(subset=["FacilityName"])
+            print(f"  Loaded per-HSA SRTM elevation statistics for {len(stats)} HSAs")
+            return stats
+        print("  Per-HSA elevation files carry only a zonal mean (no elevation_sd_m).")
+        print("  Re-run GEE_local_HSA_Weekly_Climate_Lagged.ipynb: its elevation")
+        print("  reducer now returns stdDev/min/max alongside the mean.")
+        return None
+
+    elev_files = list(data_dir.glob('*elevation*.tif')) + list(data_dir.glob('*dem*.tif'))
     if elev_files:
-        print(f"  Found elevation file: {elev_files[0]}")
-        # Would use rasterio to read elevation
-        return None  # For now, return None and use estimation
+        print(f"  Found elevation raster: {elev_files[0]}")
+        try:
+            import rasterio  # noqa: F401
+        except ImportError:
+            print("  rasterio unavailable; cannot read it.")
+            return None
+        return None
 
     return None
 
@@ -153,7 +218,8 @@ def estimate_temperature(lat, lon, elevation=None):
     return temp
 
 
-def calculate_within_hsa_variance(allocations):
+def calculate_within_hsa_variance(allocations, out_dir=None, network=None,
+                                  boundary_version=None):
     """Calculate climate variance within each HSA."""
 
     print("\nCalculating within-HSA climate variance...")
@@ -169,7 +235,7 @@ def calculate_within_hsa_variance(allocations):
     )
 
     # Calculate within-HSA statistics
-    within_stats = allocations.groupby('facility_id').agg({
+    within_stats = allocations.groupby('primary_hsa').agg({
         'estimated_temp': ['mean', 'std', 'min', 'max', 'count'],
         'estimated_elevation': ['mean', 'std', 'min', 'max'],
         'population': 'sum',
@@ -182,7 +248,7 @@ def calculate_within_hsa_variance(allocations):
 
     # Rename for clarity
     within_stats = within_stats.rename(columns={
-        'facility_id': 'hsa_id',
+        'primary_hsa': 'hsa_id',
         'estimated_temp_mean': 'temp_mean',
         'estimated_temp_std': 'temp_within_std',
         'estimated_temp_min': 'temp_min',
@@ -204,6 +270,38 @@ def calculate_within_hsa_variance(allocations):
     within_stats['lon_range'] = within_stats['lon_east'] - within_stats['lon_west']
     within_stats['temp_range'] = within_stats['temp_max'] - within_stats['temp_min']
     within_stats['elev_range'] = within_stats['elev_max'] - within_stats['elev_min']
+
+    # Replace the modelled elevation with the measured SRTM statistics where we
+    # have them. estimate_elevation() is a smooth function of distance from the
+    # Dead Sea; it cannot represent terrain, so the within-HSA spread it yields
+    # is an artefact of the model rather than a property of the service area.
+    srtm = load_elevation_data(Path('data'), out_dir=out_dir,
+                               network=network, boundary_version=boundary_version)
+    within_stats['elev_source'] = 'modelled'
+    if srtm is not None and len(srtm):
+        key = lambda s: s.astype(str).str.lower().str.replace(r'[^a-z0-9]', '', regex=True)
+        srtm = srtm.copy()
+        srtm['_k'] = key(srtm['FacilityName'])
+        within_stats['_k'] = key(within_stats['hsa_id'])
+        merged = within_stats.merge(
+            srtm[['_k', 'elevation_m', 'elevation_sd_m', 'elevation_min_m', 'elevation_max_m']],
+            on='_k', how='left')
+        hit = merged['elevation_sd_m'].notna()
+        merged.loc[hit, 'elev_mean'] = merged.loc[hit, 'elevation_m']
+        merged.loc[hit, 'elev_within_std'] = merged.loc[hit, 'elevation_sd_m']
+        merged.loc[hit, 'elev_min'] = merged.loc[hit, 'elevation_min_m']
+        merged.loc[hit, 'elev_max'] = merged.loc[hit, 'elevation_max_m']
+        merged.loc[hit, 'elev_range'] = merged.loc[hit, 'elevation_max_m'] - merged.loc[hit, 'elevation_min_m']
+        merged.loc[hit, 'elev_source'] = 'SRTM'
+        merged = merged.drop(columns=['_k', 'elevation_m', 'elevation_sd_m',
+                                      'elevation_min_m', 'elevation_max_m'])
+        within_stats = merged
+        print(f"  Elevation: SRTM statistics for {int(hit.sum())} of {len(within_stats)} HSAs"
+              + (f"; {int((~hit).sum())} still modelled" if (~hit).any() else ""))
+    else:
+        within_stats = within_stats.drop(columns=['_k'], errors='ignore')
+        print("  Elevation: SRTM statistics unavailable; values are modelled and "
+              "must not be reported as measured terrain variation.")
 
     return within_stats, allocations
 
@@ -478,8 +576,11 @@ def main():
     parser.add_argument('--hsa-mode', default='footprint')
     parser.add_argument('--data-dir', default='data')
     parser.add_argument('--out-dir', default=DEFAULT_PIPELINE_OUT_DIR)
-    parser.add_argument('--output-dir', default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / 'analysis_climate_heterogeneity'))
-    parser.add_argument('--text-output-dir', default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / 'textresults'))
+    # Default None so it derives from --out-dir below. A default frozen at
+    # import time sent every standalone run's figures into out/ regardless
+    # of which run directory was being analysed.
+    parser.add_argument('--output-dir', default=None)
+    parser.add_argument('--text-output-dir', default=None)
     parser.add_argument('--sample-size', type=int, default=500000)
     parser.add_argument('--boundary-version', default=os.environ.get("BOUNDARY_VERSION", os.environ.get("PIPELINE_VERSION", "v7")),
                         help="HSA boundary version (v6, v7, v8). Must match the run that produced allocation files.")
@@ -488,12 +589,14 @@ def main():
 
     global OUTPUT_FILE_PREFIX, TEXT_RESULTS_DIR
     OUTPUT_FILE_PREFIX = f"{args.network}_{args.hsa_mode}"
-    TEXT_RESULTS_DIR = Path(args.text_output_dir)
+    out_dir = Path(args.out_dir)
+    TEXT_RESULTS_DIR = Path(args.text_output_dir) if args.text_output_dir \
+        else out_dir / 'textresults'
     TEXT_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     data_dir = Path(args.data_dir)
-    out_dir = Path(args.out_dir)
-    output_dir = Path(args.output_dir) / args.network
+    output_dir = (Path(args.output_dir) if args.output_dir
+                  else out_dir / f'sensitivity/analysis_climate_heterogeneity_{args.boundary_version}') / args.network
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print("=" * 70)
@@ -508,7 +611,9 @@ def main():
         return
 
     # Calculate within-HSA variance
-    within_stats, allocations = calculate_within_hsa_variance(allocations)
+    within_stats, allocations = calculate_within_hsa_variance(
+        allocations, out_dir=out_dir, network=args.network,
+        boundary_version=args.boundary_version)
 
     # Calculate between-HSA variance
     between_stats = calculate_between_hsa_variance(within_stats)

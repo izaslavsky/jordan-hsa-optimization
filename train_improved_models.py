@@ -43,7 +43,7 @@ print("="*80)
 parser = argparse.ArgumentParser(description="Train improved models with AR features")
 parser.add_argument("--network", default=os.environ.get("NETWORK", "INF"))
 parser.add_argument("--hsa-mode", default=os.environ.get("HSA_MODE", "footprint"))
-parser.add_argument("--target-col", default=os.environ.get("TARGET_COL", "diarrheal_count_adjusted"))
+parser.add_argument("--target-col", default=os.environ.get("TARGET_COL"))
 parser.add_argument("--data-dir", default=os.environ.get("MODEL_DATA_DIR", str(Path(DEFAULT_PIPELINE_OUT_DIR) / "modeling")))
 parser.add_argument("--output-dir", default=os.environ.get("MODEL_OUTPUT_DIR", str(Path(DEFAULT_PIPELINE_OUT_DIR) / "modeling" / "results_improved")))
 parser.add_argument("--random-seed", type=int, default=int(os.environ.get("RANDOM_SEED", DEFAULT_RANDOM_SEED)),
@@ -69,9 +69,31 @@ train_candidate = DATA_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_{BOUNDARY_V
 val_candidate = DATA_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_{BOUNDARY_VERSION}_val.csv"
 test_candidate = DATA_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_{BOUNDARY_VERSION}_test.csv"
 
-train = pd.read_csv(train_candidate if train_candidate.exists() else DATA_DIR / "modeling_dataset_train.csv")
-val = pd.read_csv(val_candidate if val_candidate.exists() else DATA_DIR / "modeling_dataset_val.csv")
-test = pd.read_csv(test_candidate if test_candidate.exists() else DATA_DIR / "modeling_dataset_test.csv")
+_full = DATA_DIR / f"{NETWORK}_{HSA_MODE}_modeling_dataset_{BOUNDARY_VERSION}.csv"
+def _split_stale(p):
+    if not p.exists():
+        return True
+    if _full.exists() and os.path.getmtime(p) < os.path.getmtime(_full):
+        return True
+    return TARGET_COL not in pd.read_csv(p, nrows=0).columns
+if _full.exists() and any(_split_stale(p) for p in (train_candidate, val_candidate, test_candidate)):
+    # Rebuild stale/missing splits from the current full dataset (strict temporal).
+    _df = pd.read_csv(_full)
+    _tc = 'week_number' if 'week_number' in _df.columns else 'week_start'
+    if _tc == 'week_start':
+        _df['week_start'] = pd.to_datetime(_df['week_start'])
+    _times = sorted(_df[_tc].unique()); _n = len(_times)
+    _tr = int(_n * 0.75); _va = int(_n * 0.875)
+    train = _df[_df[_tc].isin(_times[:_tr])].copy()
+    val   = _df[_df[_tc].isin(_times[_tr:_va])].copy()
+    test  = _df[_df[_tc].isin(_times[_va:])].copy()
+    train.to_csv(train_candidate, index=False)
+    val.to_csv(val_candidate, index=False)
+    test.to_csv(test_candidate, index=False)
+else:
+    train = pd.read_csv(train_candidate if train_candidate.exists() else DATA_DIR / "modeling_dataset_train.csv")
+    val = pd.read_csv(val_candidate if val_candidate.exists() else DATA_DIR / "modeling_dataset_val.csv")
+    test = pd.read_csv(test_candidate if test_candidate.exists() else DATA_DIR / "modeling_dataset_test.csv")
 
 print(f"\nOriginal Data:")
 print(f"  Train: {len(train)} samples")

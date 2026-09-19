@@ -23,6 +23,7 @@ build/
 !GEE_local_HSA_Weekly_Climate_Lagged_chunked.ipynb
 !Generate_Modeling_Dataset.ipynb
 !Generate_Daily_Modeling_Dataset.ipynb
+!run_climate_models_daily.ipynb
 !run_climate_health_modeling.ipynb
 
 # IDEs

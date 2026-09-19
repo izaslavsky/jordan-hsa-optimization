@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Generate daily diarrheal case counts per HSA.
+Generate daily disease case counts per HSA (group-based, focus is a parameter).
 
 Input:
   data/{NETWORK}_patient_visits.csv  (or SYNMOD{NETWORK}_patient_visits.csv)
   {OUT_DIR}/{NETWORK}_{HSA_MODE}_facility_hsa_assignments_{BOUNDARY_VERSION}.csv
 
 Output:
-  {OUT_DIR}/{NETWORK}_{HSA_MODE}_daily_diarrheal_{BOUNDARY_VERSION}.csv
-  Columns: hsa_id, date, diarrheal_count (float, gravity-weighted), is_reporting_gap
+  {OUT_DIR}/{NETWORK}_{HSA_MODE}_daily_{FOCUS_SLUG}_{BOUNDARY_VERSION}.csv
+  Columns: hsa_id, date, {slug}_count (float, gravity-weighted), is_reporting_gap
 
 Study period dates, NETWORK, and HSA_MODE must be passed by the calling notebook.
 Reporting gap dates are read from data/reporting_gaps.csv (daily DLNM pipeline only).
@@ -23,15 +23,11 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from disease_focus import (canonical_group, group_column, canonicalize_series,
+                           slug, daily_outcome_col)
+
 BASE_DIR        = Path(__file__).resolve().parent
 DEFAULT_OUT_DIR = Path(os.environ.get("HSA_OUT_DIR", os.environ.get("PIPELINE_OUT_DIR", "out")))
-
-_DISEASE_CATEGORY = {
-    "INF":    "Diarrheal Diseases",
-    "SYNINF": "Diarrheal Diseases",
-    "NCD":    "hypertension",
-    "SYNNCD": "hypertension",
-}
 
 
 def parse_hsa_weights(s: str) -> dict:
@@ -73,6 +69,10 @@ def main():
                         help="Pipeline output directory")
     parser.add_argument("--boundary-version", default="v7",
                         help="HSA boundary bundle version (v6, v7, v8). Default: v7.")
+    parser.add_argument("--disease-focus", required=True,
+                        help="Disease-group focus (e.g. 'diarrheal' or 'hypertension', "
+                             "or the exact canonical label). Resolved against the "
+                             "authoritative {NETWORK}_groups_of_diagnoses.csv; never hardcoded.")
     parser.add_argument("--patient-file", default=None,
                         help="Path to patient visits CSV. Defaults to "
                              "data/{NETWORK}_patient_visits.csv (real) or "
@@ -87,12 +87,18 @@ def main():
     CODE_VALID_FROM = args.study_start
     STUDY_END       = args.study_end
 
+    # Resolve the focus to the canonical group label, its slug, and the outcome
+    # column name. Nothing below hardcodes a disease label or column name.
+    disease_cat = canonical_group(NETWORK, args.disease_focus, data_dir=str(BASE_DIR / "data"))
+    FOCUS_SLUG  = slug(disease_cat)
+    OUTCOME_COL = daily_outcome_col(disease_cat)
+
     OUT_DIR = Path(args.out_dir)
     if not OUT_DIR.is_absolute():
         OUT_DIR = BASE_DIR / OUT_DIR
 
     ALLOC_FILE = OUT_DIR / f"{NETWORK}_{HSA_MODE}_facility_hsa_assignments_{args.boundary_version}.csv"
-    OUT_FILE   = OUT_DIR / f"{NETWORK}_{HSA_MODE}_daily_diarrheal_{args.boundary_version}.csv"
+    OUT_FILE   = OUT_DIR / f"{NETWORK}_{HSA_MODE}_daily_{FOCUS_SLUG}_{args.boundary_version}.csv"
 
     if args.patient_file:
         PATIENT_FILE = Path(args.patient_file)
@@ -107,8 +113,6 @@ def main():
     if not gaps_path.is_absolute():
         gaps_path = BASE_DIR / gaps_path
     REPORTING_GAPS = load_reporting_gaps(gaps_path)
-
-    disease_cat = _DISEASE_CATEGORY.get(NETWORK.upper(), "Diarrheal Diseases")
 
     print("=" * 60)
     print(f"DAILY DISEASE COUNTS -- {NETWORK} {HSA_MODE}")
@@ -138,8 +142,14 @@ def main():
     pv["date"] = pd.to_datetime(pv["datetimediagnosisentered"], errors="coerce").dt.date
     pv = pv.dropna(subset=["date"])
 
+    # Resolve the group column agnostically and canonicalize its casing against
+    # the authoritative table, then match the canonical focus label. No hardcoded
+    # column name or case-sensitive literal.
+    pv_group_col = group_column(pv)
+    pv[pv_group_col] = canonicalize_series(pv[pv_group_col], NETWORK,
+                                           data_dir=str(BASE_DIR / "data"))
     visits = pv[
-        (pv["general_category"] == disease_cat)
+        (pv[pv_group_col] == disease_cat)
         & (pv["date"] >= pd.to_datetime(CODE_VALID_FROM).date())
         & (pv["date"] <= pd.to_datetime(STUDY_END).date())
     ].copy()
@@ -172,7 +182,7 @@ def main():
         weighted.groupby(["hsa_id", "date"])["weight"]
         .sum()
         .reset_index()
-        .rename(columns={"weight": "diarrheal_count"})
+        .rename(columns={"weight": OUTCOME_COL})
     )
     daily["date"] = pd.to_datetime(daily["date"]).dt.date
 
@@ -190,7 +200,7 @@ def main():
     if REPORTING_GAPS:
         gap_set  = set(pd.to_datetime(REPORTING_GAPS).date)
         gap_mask = daily["date"].isin(gap_set)
-        daily.loc[gap_mask, "diarrheal_count"] = np.nan
+        daily.loc[gap_mask, OUTCOME_COL] = np.nan
         daily["is_reporting_gap"] = gap_mask.astype(int)
         print(f"  Flagged {gap_mask.sum()} HSA-day rows as reporting gaps")
     else:
@@ -202,11 +212,11 @@ def main():
     print(f"  Shape: {daily.shape}")
     print(f"  HSAs: {daily['hsa_id'].nunique()}")
     print(f"  Date range: {daily['date'].min()} to {daily['date'].max()}")
-    print(f"  Total weighted cases: {daily['diarrheal_count'].sum():.0f}")
-    print(f"  Non-zero days: {(daily['diarrheal_count'] > 0).sum():,}")
+    print(f"  Total weighted cases: {daily[OUTCOME_COL].sum():.0f}")
+    print(f"  Non-zero days: {(daily[OUTCOME_COL] > 0).sum():,}")
 
     print("\n  Top HSAs by total cases:")
-    top = daily.groupby("hsa_id")["diarrheal_count"].sum().nlargest(5)
+    top = daily.groupby("hsa_id")[OUTCOME_COL].sum().nlargest(5)
     for hsa, n in top.items():
         print(f"    {hsa}: {n:.0f}")
 

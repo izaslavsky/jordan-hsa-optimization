@@ -34,6 +34,13 @@ from itertools import product
 
 warnings.filterwarnings('ignore')
 DEFAULT_PIPELINE_OUT_DIR = os.environ.get("HSA_OUT_DIR", os.environ.get("PIPELINE_OUT_DIR", "out"))
+
+# Population raster the allocation is evaluated on. Named here rather than
+# synthesised, so the sensitivity describes Jordan's actual distribution.
+POP_PATH = os.environ.get("HSA_POP_RASTER",
+                          str(Path(__file__).resolve().parent / "data" /
+                              "jor_ppp_2020_UNadj.tif"))
+GRAVITY_COARSEN = int(os.environ.get("GRAVITY_COARSEN", "16"))
 OUTPUT_FILE_PREFIX = ""
 TEXT_RESULTS_DIR = None
 
@@ -78,6 +85,35 @@ def load_facility_data(data_dir, network):
         if 'latitude' in col_map:
             fac_df['lat'] = fac_df[col_map['latitude']]
             fac_df['lon'] = fac_df[col_map['longitude']]
+
+    # Patient volume is the gravity model's attractiveness term, so it has to be
+    # the real one. The coordinates file does not carry it; earlier code filled
+    # the gap with np.random.exponential, which makes the resulting sensitivity
+    # a statement about random numbers.
+    if 'Total' not in fac_df.columns:
+        out_dir = Path(os.environ.get("HSA_OUT_DIR",
+                                      os.environ.get("PIPELINE_OUT_DIR", "out")))
+        if not out_dir.is_absolute():
+            out_dir = Path(__file__).resolve().parent / out_dir
+        pivot = next((out_dir / f for f in
+                      (f'{network}_footprint_diagnosis_counts_pivot.csv',
+                       f'{network}_diagnosis_counts_pivot.csv')
+                      if (out_dir / f).exists()), None)
+        if pivot is None:
+            raise FileNotFoundError(
+                f"No diagnosis counts pivot in {out_dir}; cannot attach real "
+                f"patient volumes for the gravity model")
+        counts = pd.read_csv(pivot)
+        key = 'healthfacility' if 'healthfacility' in fac_df.columns else 'HealthFacility'
+        norm = lambda x: x.astype(str).str.replace(r'\s+', ' ', regex=True).str.strip()
+        vol = dict(zip(norm(counts['healthfacility']), counts['total_diagnoses']))
+        fac_df['Total'] = norm(fac_df[key]).map(vol)
+        missing = int(fac_df['Total'].isna().sum())
+        if missing:
+            print(f"  WARNING: {missing} facilities have no diagnosis count; set to 0")
+            fac_df['Total'] = fac_df['Total'].fillna(0)
+        print(f"  Attached patient volumes from {pivot.name} "
+              f"(total {fac_df['Total'].sum():,.0f})")
 
     return fac_df
 
@@ -133,55 +169,114 @@ def calculate_gravity_weight(volume, distance, alpha, beta, min_distance=0.1):
     return (volume ** alpha) / (distance ** beta)
 
 
-def simulate_allocation_with_parameters(fac_df, n_pixels=1000, alpha=0.75, beta=1.5):
+def load_population_pixels(pop_path, coarsen=16, seed=42):
     """
-    Simulate patient allocation under different gravity parameters.
+    Every inhabited cell of the population raster, block-aggregated.
 
-    This is a simplified simulation that demonstrates how parameters
-    affect allocation patterns without requiring the full raster data.
+    The allocation being tested operates on Jordan's population, which sits in a
+    narrow northern corridor. Drawing pixels uniformly from the country's
+    bounding box, as this analysis previously did, spreads them over mostly
+    empty desert and describes a population that does not exist.
+
+    Sampling cells is also the wrong fix: the raster holds ~12.1M inhabited
+    cells at 100 m, so any tractable sample of distinct cells carries a small
+    fraction of the 10.2M people. Cells are therefore aggregated into coarser
+    blocks, which keeps the whole population and its geography while making the
+    pixel-by-facility distance matrix tractable. At coarsen=16 this is ~48k
+    cells holding 10,203,033 of 10,203,140 people.
+    """
+    import rasterio
+    from rasterio.transform import xy as _xy
+
+    with rasterio.open(pop_path) as src:
+        arr = src.read(1)
+        transform = src.transform
+        nodata = src.nodata
+    arr = np.where(np.isfinite(arr), arr, 0.0)
+    if nodata is not None:
+        arr = np.where(arr == nodata, 0.0, arr)
+    arr = np.where(arr < 0, 0.0, arr)
+
+    c = int(max(1, coarsen))
+    if c > 1:
+        h = arr.shape[0] // c * c
+        w = arr.shape[1] // c * c
+        arr = arr[:h, :w].reshape(h // c, c, w // c, c).sum(axis=(1, 3))
+        transform = transform * rasterio.Affine.scale(c, c)
+
+    rows, cols = np.nonzero(arr > 0)
+    pops = arr[rows, cols].astype(float)
+    if len(pops) == 0:
+        raise RuntimeError(f"No populated cells in {pop_path}")
+
+    lons, lats = _xy(transform, rows, cols)
+    return np.asarray(lons), np.asarray(lats), pops
+
+
+def _haversine_km(lon1, lat1, lon2, lat2):
+    """Great-circle distance; the previous code used degrees x 111."""
+    r = 6371.0088
+    p1, p2 = np.radians(lat1), np.radians(lat2)
+    dp = p2 - p1
+    dl = np.radians(lon2 - lon1)
+    a = np.sin(dp / 2.0) ** 2 + np.cos(p1) * np.cos(p2) * np.sin(dl / 2.0) ** 2
+    return 2 * r * np.arcsin(np.sqrt(np.clip(a, 0, 1)))
+
+
+def simulate_allocation_with_parameters(fac_df, coarsen=16, alpha=0.75, beta=1.5,
+                                        pop_path=None, seed=42):
+    """
+    Allocate real population cells across facilities under one (alpha, beta).
+
+    Every cell's people are split across facilities in proportion to the gravity
+    weight, rather than assigned whole to the nearest, so the reported
+    concentration reflects the model actually used in the pipeline. Metrics are
+    population-weighted.
     """
     n_facilities = len(fac_df)
+    if 'Total' not in fac_df.columns:
+        raise RuntimeError("facility table must carry a 'Total' patient-volume column")
+    volumes = fac_df['Total'].astype(float).values
 
-    # Get facility coordinates and volumes (use random volumes if not available)
-    if 'Total' in fac_df.columns:
-        volumes = fac_df['Total'].values
-    else:
-        # Use random volumes as proxy
-        np.random.seed(42)
-        volumes = np.random.exponential(scale=1000, size=n_facilities)
+    if pop_path is None:
+        raise RuntimeError("pop_path is required: this analysis reads the "
+                           "population raster rather than synthesising pixels")
+    pixel_lons, pixel_lats, pixel_pops = load_population_pixels(
+        pop_path, coarsen=coarsen, seed=seed)
+    n_pixels = len(pixel_pops)
 
-    coords = np.column_stack([fac_df['lon'].values, fac_df['lat'].values])
+    fac_lon = fac_df['lon'].astype(float).values
+    fac_lat = fac_df['lat'].astype(float).values
 
-    # Generate random pixel locations within Jordan bounds
-    np.random.seed(42)  # Reproducibility
-    pixel_lons = np.random.uniform(35.0, 39.5, n_pixels)
-    pixel_lats = np.random.uniform(29.0, 33.5, n_pixels)
+    # Chunked so the pixel-by-facility matrix never has to be held whole.
+    facility_pop = np.zeros(n_facilities)
+    assigned_facility = np.empty(n_pixels, dtype=int)
+    CHUNK = 4096
+    for lo in range(0, n_pixels, CHUNK):
+        hi = min(lo + CHUNK, n_pixels)
+        d = _haversine_km(pixel_lons[lo:hi, None], pixel_lats[lo:hi, None],
+                          fac_lon[None, :], fac_lat[None, :])
+        w = calculate_gravity_weight(volumes[None, :], d, alpha, beta)
+        tot = w.sum(axis=1, keepdims=True)
+        shares = np.divide(w, tot, out=np.full_like(w, 1.0 / n_facilities),
+                           where=tot > 0)
+        facility_pop += shares.T @ pixel_pops[lo:hi]
+        assigned_facility[lo:hi] = np.argmax(shares, axis=1)
 
-    # Calculate distances from each pixel to each facility (approximate degrees)
-    allocations = np.zeros((n_pixels, n_facilities))
-
-    for i in range(n_pixels):
-        distances = np.sqrt((coords[:, 0] - pixel_lons[i])**2 +
-                           (coords[:, 1] - pixel_lats[i])**2) * 111  # Approx km
-
-        weights = calculate_gravity_weight(volumes, distances, alpha, beta)
-
-        # Normalize to probabilities
-        allocations[i] = weights / weights.sum()
-
-    # Assign to max probability facility
-    assigned_facility = np.argmax(allocations, axis=1)
-
-    # Calculate allocation metrics
-    facility_counts = np.bincount(assigned_facility, minlength=n_facilities)
-    concentration = (facility_counts ** 2).sum() / (n_pixels ** 2)  # Herfindahl index
+    total_pop = float(pixel_pops.sum())
+    facility_counts = np.bincount(assigned_facility, weights=pixel_pops,
+                                  minlength=n_facilities)
+    concentration = float((facility_pop ** 2).sum() / (total_pop ** 2))
 
     return {
-        'facility_counts': facility_counts,
+        'facility_counts': facility_counts,      # population, not pixel counts
+        'facility_population': facility_pop,
         'concentration': concentration,
-        'gini': calculate_gini(facility_counts),
-        'max_share': facility_counts.max() / n_pixels,
-        'assigned_facilities': assigned_facility
+        'gini': calculate_gini(facility_pop),
+        'max_share': float(facility_pop.max() / total_pop) if total_pop else 0.0,
+        'n_pixels_used': int(n_pixels),
+        'population_represented': total_pop,
+        'assigned_facilities': assigned_facility,
     }
 
 
@@ -196,7 +291,7 @@ def calculate_gini(values):
     return (2 * np.sum(index * values) - (n + 1) * np.sum(values)) / (n * np.sum(values))
 
 
-def run_sensitivity_analysis(fac_df, n_simulations=1000):
+def run_sensitivity_analysis(fac_df, n_simulations=4000):
     """Run sensitivity analysis across parameter grid."""
     print("\n" + "="*80)
     print("GRAVITY MODEL PARAMETER SENSITIVITY ANALYSIS")
@@ -208,7 +303,8 @@ def run_sensitivity_analysis(fac_df, n_simulations=1000):
         print(f"\n  α={alpha}, β={beta}...")
 
         sim_result = simulate_allocation_with_parameters(
-            fac_df, n_pixels=n_simulations, alpha=alpha, beta=beta
+            fac_df, coarsen=GRAVITY_COARSEN, alpha=alpha, beta=beta,
+            pop_path=POP_PATH
         )
 
         results.append({
@@ -431,6 +527,7 @@ def main():
     parser.add_argument('--output-dir', default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / 'analysis_gravity_sensitivity'))
     parser.add_argument('--text-output-dir', default=str(Path(DEFAULT_PIPELINE_OUT_DIR) / 'textresults'))
     parser.add_argument('--target-col', default=None)
+    parser.add_argument('--disease-focus', default=None, help='Disease-group focus; resolved to the outcome column via the authoritative table, never hardcoded')
     parser.add_argument('--n-simulations', type=int, default=5000)
     parser.add_argument('--boundary-version', default=os.environ.get("BOUNDARY_VERSION", os.environ.get("PIPELINE_VERSION", "v7")),
                         help="HSA boundary version (v6, v7, v8)")
@@ -448,7 +545,10 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if args.target_col is None:
-        args.target_col = 'diarrheal_count_adjusted' if args.network == 'INF' else 'hypertension_count_adjusted'
+        if not args.disease_focus:
+            parser.error('--target-col or --disease-focus is required (resolved to the outcome column; no hardcoded default)')
+        from disease_focus import canonical_group, weekly_outcome_col
+        args.target_col = weekly_outcome_col(canonical_group(args.network, args.disease_focus))
 
     print("="*80)
     print("GRAVITY MODEL SENSITIVITY ANALYSIS")

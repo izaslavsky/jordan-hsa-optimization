@@ -11,7 +11,7 @@ Inputs:
 Outputs:
   {OUT_DIR}/modeling/{NETWORK}_{HSA_MODE}_daily_modeling_dataset_{ver}.csv
   Columns:
-    hsa_id, date, diarrheal_count
+    hsa_id, date, {focus_slug}_count
     P_precip, T_mean_C, T_max_C, T_min_C, Td_C, DTR_C,
     wind_speed_ms, SM1, SM2, hours_above_30C, heat_index_C   (contemporaneous)
     *_lag{k} for k in 1..14  (climate lags for cross-basis)
@@ -111,6 +111,9 @@ def main():
                                            os.environ.get("PIPELINE_OUT_DIR", "out")))
     parser.add_argument("--boundary-version", default="v7",
                         help="HSA boundary version (v6, v7, v8). Default: v7.")
+    parser.add_argument("--disease-focus", default=os.environ.get("DISEASE_FOCUS"),
+                        help="Disease-group focus (group label or keyword). Required; "
+                             "resolved against the authoritative table, never hardcoded.")
     parser.add_argument("--health-file",   default=None)
     parser.add_argument("--climate-dir",   default=None)
     parser.add_argument("--output-dir",    default=None)
@@ -124,13 +127,21 @@ def main():
     if not NETWORK or not HSA_MODE:
         parser.error("--network and --hsa-mode are required (set in notebook configuration)")
 
+    if not args.disease_focus:
+        parser.error("--disease-focus is required (no hardcoded default)")
+    # Resolve the focus to its canonical group slug and outcome column.
+    from disease_focus import canonical_group, slug, daily_outcome_col
+    _label = canonical_group(NETWORK, args.disease_focus)
+    FOCUS_SLUG  = slug(_label)
+    OUTCOME_COL = daily_outcome_col(_label)
+
     ver = args.boundary_version
     pipeline_out = Path(args.out_dir)
     if not pipeline_out.is_absolute():
         pipeline_out = BASE_DIR / pipeline_out
 
     HEALTH_FILE = (Path(args.health_file) if args.health_file
-                   else pipeline_out / f"{NETWORK}_{HSA_MODE}_daily_diarrheal_{ver}.csv")
+                   else pipeline_out / f"{NETWORK}_{HSA_MODE}_daily_{FOCUS_SLUG}_{ver}.csv")
     CLIMATE_DIR = (Path(args.climate_dir) if args.climate_dir
                    else pipeline_out / f"DRIVE_CLIMATE_BY_HSA_DOWNLOAD_DAILY_{ver.upper()}")
     OUT_DIR  = Path(args.output_dir) if args.output_dir else pipeline_out / "modeling"
@@ -180,6 +191,37 @@ def main():
     climate = climate[keep].copy()
     print(f"  {len(climate):,} rows, vars: {[v for v in CLIMATE_VARS if v in climate.columns]}")
 
+    # The climate download directory is keyed by network and boundary version but
+    # not by HSA mode, so exports from different modes land side by side and a
+    # deleted anchor's files outlive the delineation that produced them. Both
+    # failures are silent downstream: a duplicate anchor multiplies rows in the
+    # merge below, and a stale anchor simply never matches. Check explicitly.
+    dup = climate.duplicated(subset=["hsa_id", "date"]).sum()
+    if dup:
+        offenders = (climate[climate.duplicated(subset=["hsa_id", "date"], keep=False)]
+                     ["hsa_id"].unique().tolist())
+        print(f"\n  ERROR: {dup:,} duplicate (hsa_id, date) rows in {CLIMATE_DIR}")
+        print(f"  Affected anchors: {', '.join(map(str, offenders[:10]))}")
+        print("  This directory holds more than one run's exports. Re-export into an")
+        print("  isolated HSA_OUT_DIR, or clear the directory before downloading.")
+        sys.exit(1)
+
+    health_ids  = set(health["hsa_id"].unique())
+    climate_ids = set(climate["hsa_id"].unique())
+    stale   = sorted(climate_ids - health_ids)
+    missing = sorted(health_ids - climate_ids)
+    if stale:
+        print(f"  Note: {len(stale)} anchor(s) have climate but are not in this "
+              f"delineation (ignored): {', '.join(stale[:6])}"
+              + (" ..." if len(stale) > 6 else ""))
+    if missing:
+        print(f"\n  ERROR: {len(missing)} anchor(s) in the delineation have no climate data:")
+        for m in missing:
+            print(f"    - {m}")
+        print(f"  Re-run the daily GEE export for {NETWORK}-{HSA_MODE} before continuing.")
+        sys.exit(1)
+    print(f"  Anchor check: {len(health_ids)} delineation anchors all have climate")
+
     # 3. Merge health + climate
     print("\n[3/6] Merging health and climate...")
     df = health.merge(climate, on=["hsa_id", "date"], how="left")
@@ -215,7 +257,7 @@ def main():
         df = df[~gap_rows].copy().reset_index(drop=True)
 
     before = len(df)
-    df = df.dropna(subset=["diarrheal_count"]).reset_index(drop=True)
+    df = df.dropna(subset=[OUTCOME_COL]).reset_index(drop=True)
     if len(df) < before:
         print(f"  Dropped {before - len(df)} additional NaN-outcome rows")
 
@@ -252,11 +294,11 @@ def main():
     print(f"Shape: {df.shape}")
     print(f"Date range: {df['date'].min().date()} to {df['date'].max().date()}")
     print(f"HSAs: {df['hsa_id'].nunique()}")
-    print(f"Non-zero days: {(df['diarrheal_count'] > 0).sum():,}")
-    print(f"Zeros: {(df['diarrheal_count'] == 0).mean()*100:.1f}%")
+    print(f"Non-zero days: {(df[OUTCOME_COL] > 0).sum():,}")
+    print(f"Zeros: {(df[OUTCOME_COL] == 0).mean()*100:.1f}%")
 
     print("\nPer-HSA daily case mean (top 5):")
-    top = df.groupby("hsa_id")["diarrheal_count"].mean().nlargest(5)
+    top = df.groupby("hsa_id")[OUTCOME_COL].mean().nlargest(5)
     for hsa, m in top.items():
         print(f"  {hsa}: {m:.1f}/day")
 

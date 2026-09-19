@@ -58,15 +58,19 @@ def load_hsa_data() -> pd.DataFrame:
 
     print("Loading HSA weekly data...")
 
-    # Load HSA weekly disease data
-    candidates = [
-        OUT_DIR / f"{NETWORK}_{HSA_MODE}_weekly_infectious_adjusted_{BOUNDARY_VERSION}.csv",
-        OUT_DIR / f"{NETWORK}_{HSA_MODE}_weekly_ncd_adjusted_{BOUNDARY_VERSION}.csv",
-        OUT_DIR / f"{NETWORK}_{HSA_MODE}_weekly_hypertension_adjusted_{BOUNDARY_VERSION}.csv",
-    ]
-    hsa_weekly_path = next((p for p in candidates if p.exists()), None)
+    # Load HSA weekly disease data. The primary (group-based) weekly file is
+    # named {NETWORK}_{HSA_MODE}_weekly_{disease_slug}_adjusted_{ver}.csv; the
+    # all-cause secondary is {NETWORK}_{HSA_MODE}_weekly_{network}_adjusted_....
+    # Resolve by glob and prefer the primary, so no disease label is hardcoded.
+    all_weekly = sorted(OUT_DIR.glob(
+        f"{NETWORK}_{HSA_MODE}_weekly_*_adjusted_{BOUNDARY_VERSION}.csv"))
+    secondary = f"{NETWORK}_{HSA_MODE}_weekly_{NETWORK.lower()}_adjusted_{BOUNDARY_VERSION}.csv"
+    primary = [p for p in all_weekly if p.name != secondary]
+    hsa_weekly_path = primary[0] if primary else (all_weekly[0] if all_weekly else None)
     if hsa_weekly_path is None:
-        raise FileNotFoundError(f"Could not find HSA weekly data. Tried: {candidates}")
+        raise FileNotFoundError(
+            f"Could not find HSA weekly data in {OUT_DIR} matching "
+            f"{NETWORK}_{HSA_MODE}_weekly_*_adjusted_{BOUNDARY_VERSION}.csv")
 
     disease_df = pd.read_csv(hsa_weekly_path)
     print(f"  Loaded {len(disease_df):,} rows from HSA weekly data")
@@ -255,7 +259,7 @@ def identify_climate_columns(df: pd.DataFrame) -> Dict[str, List[str]]:
                ('lag' in c.lower() and 'case' in c.lower())]
 
     outcome_cols = [c for c in cols if any(x in c.lower() for x in
-                   ['cases', 'count', 'infectious', 'disease']) and 'lag' not in c.lower()]
+                   ['cases', 'count', 'disease']) and 'lag' not in c.lower()]
 
     return {
         'climate': climate_cols,
@@ -374,13 +378,17 @@ def compare_climate_contribution_by_connectivity(data: pd.DataFrame,
     print("=" * 60)
 
     # Find outcome column
+    # Prefer the group-outcome column (the single '..._count_adjusted' produced by
+    # the weekly generator); no hardcoded disease labels.
     outcome_col = None
-    for candidate in ['infectious_count_adjusted', 'hypertension_count_adjusted', 'ncd_count_adjusted',
-                      'infectious_cases', 'hypertension_cases', 'ncd_cases', 'cases',
-                      'case_count', 'weekly_cases', 'count_adjusted']:
-        if candidate in data.columns:
-            outcome_col = candidate
-            break
+    _adj = [c for c in data.columns if c.endswith('_count_adjusted')]
+    if _adj:
+        outcome_col = _adj[0]
+    else:
+        for candidate in ['cases', 'case_count', 'weekly_cases']:
+            if candidate in data.columns:
+                outcome_col = candidate
+                break
 
     if outcome_col is None:
         # Try to find any numeric column that could be outcome
@@ -560,13 +568,17 @@ def test_climate_interaction_with_probability(data: pd.DataFrame,
     print("=" * 60)
 
     # Find outcome
+    # Prefer the group-outcome column (the single '..._count_adjusted' produced by
+    # the weekly generator); no hardcoded disease labels.
     outcome_col = None
-    for candidate in ['infectious_count_adjusted', 'hypertension_count_adjusted', 'ncd_count_adjusted',
-                      'infectious_cases', 'hypertension_cases', 'ncd_cases', 'cases',
-                      'case_count', 'weekly_cases', 'count_adjusted']:
-        if candidate in data.columns:
-            outcome_col = candidate
-            break
+    _adj = [c for c in data.columns if c.endswith('_count_adjusted')]
+    if _adj:
+        outcome_col = _adj[0]
+    else:
+        for candidate in ['cases', 'case_count', 'weekly_cases']:
+            if candidate in data.columns:
+                outcome_col = candidate
+                break
 
     if outcome_col is None:
         # Try to find any count column

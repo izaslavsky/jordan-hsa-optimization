@@ -7,7 +7,7 @@ This script tests how variations in the optimization weights affect
 HSA delineation outcomes. It validates that results aren't arbitrary
 by showing robustness (or sensitivity) to weight configurations.
 
-Weight components (from HSA_FINAL.ipynb):
+Weight Components (from HSA_v6_FINAL.ipynb):
 - population_coverage: Population coverage weight
 - climatic_diversity: Climate diversity across HSAs
 - facility_volume: Facility patient volume
