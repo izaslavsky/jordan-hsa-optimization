@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: If you use this software, please cite it using these metadata.
+title: jordan-hsa-optimization
+abstract: >-
+  Multi-objective delineation of hospital service areas from facility locations,
+  patient volumes and gridded population, with gravity-based population
+  allocation and weekly and daily climate-health modeling pipelines for Jordan.
+type: software
+license: MIT
+repository-code: https://github.com/izaslavsky/jordan-hsa-optimization
+authors:
+  - family-names: Zaslavsky
+    given-names: Ilya
+  - family-names: Lamont
+    given-names: Stephan
+  - family-names: Hussien
+    given-names: Moawiah O.
+  - family-names: Abudhail
+    given-names: Jamila
+  - family-names: Kirkpatrick
+    given-names: Christine
+  - family-names: Al-Delaimy
+    given-names: Wael
+keywords:
+  - hospital service areas
+  - spatial optimization
+  - climate and health
+  - distributed lag non-linear models
+  - Jordan

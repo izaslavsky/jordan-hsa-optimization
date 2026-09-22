@@ -1,9 +1,9 @@
-# Hospital Service Area Optimization and Climate-Health Analysis — v2
+# Hospital Service Area Optimization and Climate-Health Analysis
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 
-Code and synthetic data accompanying the research paper on delineating Hospital Service Areas (HSAs) using patient trajectory data and analyzing climate-health relationships in Jordan. This is **v2** of the repository, which adds three algorithm variants for HSA boundary delineation, a daily climate-health epidemiological pipeline, and a DLNM cross-basis module. The original repository (`jordan-hsa-optimization`) retains the v6 baseline algorithm and weekly modeling pipeline.
+Code and synthetic data accompanying the research paper on delineating Hospital Service Areas (HSAs) from facility locations and patient volumes, and on analyzing climate-health relationships in Jordan. It contains the delineation algorithm and its three boundary variants, gravity-based population allocation, the weekly and daily climate-health modeling pipelines, and a DLNM cross-basis module.
 
 ---
 
@@ -34,7 +34,7 @@ directory predates the delineation. Matching file counts is not sufficient —
 several defects found during development produced the right number of files
 with the wrong membership.
 
-## What is new in v2
+## Delineation and modeling components
 
 ### Three HSA algorithm variants
 
@@ -43,7 +43,7 @@ with the wrong membership.
 | Bundle | Algorithm | Key additions |
 |--------|-----------|---------------|
 | **v6** | Greedy multi-objective optimization only | Baseline — no post-selection corrections |
-| **v7** | v6 + anchor quality-control | Weak anchors replaced by stronger nearby facilities; major hospitals without a plausible fallback promoted to anchors |
+| **v7** | v6 + anchor quality-control | Weak anchors replaced by stronger nearby facilities; a major facility outside every service area promoted to anchor when no admissible anchor is within the fallback distance |
 | **v8** | v7 + satellite bubble boundaries | HSA polygons union the anchor catchment with smaller secondary catchments around eligible nearby facilities |
 
 All downstream notebooks select a bundle via `BOUNDARY_VERSION = "v6" | "v7" | "v8"` near the top of each notebook.
@@ -75,7 +75,7 @@ See `DATA_FLOW_ANALYSIS.md` for end-to-end pipeline description.
 ## Repository structure
 
 ```
-jordan-hsa-optimization_v2/
+jordan-hsa-optimization/
 ├── data/
 │   ├── adm_boundaries/              Administrative boundaries (governorate/district/subdistrict)
 │   ├── SYNMODINF_facility_coordinates.csv   INF facility locations
@@ -146,8 +146,8 @@ jordan-hsa-optimization_v2/
 ## Installation
 
 ```bash
-git clone <repo-url>
-cd jordan-hsa-optimization_v2
+git clone https://github.com/izaslavsky/jordan-hsa-optimization.git
+cd jordan-hsa-optimization
 pip install -r requirements.txt
 earthengine authenticate   # required for GEE notebooks
 ```
@@ -304,13 +304,18 @@ The weekly export also emits per-HSA elevation statistics from SRTM: mean, stand
 ## Citation
 
 ```bibtex
-@software{hsa_climate_health_v2_2025,
-  title  = {Hospital Service Area Optimization and Climate-Health Analysis, v2},
-  author = {Zaslavsky, Ilya},
-  year   = {2025},
-  note   = {Three-variant HSA delineation with daily DLNM epidemiological pipeline}
+@software{zaslavsky_jordan_hsa_optimization_2026,
+  title     = {jordan-hsa-optimization},
+  author    = {Zaslavsky, Ilya and Lamont, Stephan and Hussien, Moawiah O. and
+               Abudhail, Jamila and Kirkpatrick, Christine and Al-Delaimy, Wael},
+  year      = {2026},
+  publisher = {Zenodo},
+  doi       = {10.5281/zenodo.XXXXXXX},
+  note      = {Software and synthetic data}
 }
 ```
+
+Replace the DOI above with the version DOI of the archived release.
 
 ---
 
