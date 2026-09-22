@@ -103,7 +103,13 @@ PROFILES = {
 
 
 def load_facilities(out_dir: Path, network: str) -> gpd.GeoDataFrame:
-    clim = pd.read_csv(out_dir / f"{network}_Facilities_Climate_Features_with_clusters.csv")
+    _cf = out_dir / f"{network}_Facilities_Climate_Features_with_clusters.csv"
+    if not _cf.exists():
+        for _alt in (Path("out") / _cf.name, Path("data") / _cf.name):  # noqa: hardcode - shared GEE Step A input
+            if _alt.exists():
+                _cf = _alt
+                break
+    clim = pd.read_csv(_cf)
     clim["HealthFacility"] = clim["FacilityName"].str.replace(r"\s+", " ", regex=True).str.strip()
     diag_path = next(
         (p for p in (out_dir / f"{network}_footprint_diagnosis_counts_pivot.csv",

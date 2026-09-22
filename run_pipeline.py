@@ -186,18 +186,26 @@ def _gee_outputs_exist(out_dir: Path, network: str, boundary_version: str) -> di
     """Return dict of {prereq_key: bool} indicating which GEE outputs are ready."""
     ver = boundary_version.upper()
 
-    # Climate features CSV — produced by GEE_local_Climate_Features_by_Facilities
+    # Climate features CSV — produced by GEE_local_Climate_Features_by_Facilities.
+    # It is a shared input (GEE Step A, before any delineation), so it may sit in
+    # the run directory, in out/, or be shipped in data/ for the synthetic
+    # networks. Say which was used: the notebooks resolve everything from the run
+    # directory, so preflight reporting OK on a file found elsewhere would send
+    # the run off to fail later.
     cf_candidates = list(out_dir.glob(f"{network}_Facilities_Climate_Features*.csv"))
     if not cf_candidates:
-        # Facility climate is a shared input (GEE Step A, before any delineation),
-        # so falling back to out/ is legitimate. Say so: preflight would otherwise
-        # report OK while the notebooks, which resolve everything from the run
-        # directory, go on to fail on a file preflight found somewhere else.
         cf_candidates = list((BASE_DIR / "out").glob(f"{network}_Facilities_Climate_Features*.csv"))  # noqa: hardcode - shared GEE Step A input
         if cf_candidates:
             print(f"  [note] {network} facility climate not in {out_dir}; found in out/. "
                   f"Copy it into the run directory before running:")
             print(f"         cp out/{cf_candidates[0].name} {out_dir}/")
+    if not cf_candidates:
+        # Shipped with the synthetic datasets so the pipeline runs without an
+        # Earth Engine account. These features depend only on facility location,
+        # so a synthetic network reusing the real facility set shares them.
+        cf_candidates = list((BASE_DIR / "data").glob(f"{network}_Facilities_Climate_Features*.csv"))  # noqa: hardcode - shipped shared input
+        if cf_candidates:
+            print(f"  [note] using the facility climate shipped in data/: {cf_candidates[0].name}")
 
     # Weekly climate dir — produced by GEE_local_HSA_Weekly_Climate_Lagged
     weekly_dir = out_dir / f"DRIVE_CLIMATE_BY_HSA_DOWNLOAD_{ver}" / "FINAL_HSA_CLIMATE"
@@ -272,6 +280,67 @@ def _seed_cell(nb: nbformat.NotebookNode) -> nbformat.NotebookNode:
     return cell
 
 
+def _render_cell_outputs(nb) -> str:
+    """Render a notebook's executed outputs as the markdown summary section."""
+    blocks = ["## Displayed Cell Outputs"]
+    for idx, cell in enumerate(nb.cells, start=1):
+        if cell.get("cell_type") != "code":
+            continue
+        outputs = cell.get("outputs") or []
+        if not outputs:
+            continue
+        blocks.append(f"### Cell {idx}")
+        for out in outputs:
+            otype = out.get("output_type")
+            if otype == "stream":
+                text = out.get("text", "")
+                text = "".join(text) if isinstance(text, list) else str(text)
+                if text.rstrip():
+                    blocks.append("```text\n" + text.rstrip() + "\n```")
+            elif otype in ("execute_result", "display_data"):
+                data = out.get("data", {})
+                if "text/markdown" in data:
+                    md = data["text/markdown"]
+                    md = "".join(md) if isinstance(md, list) else str(md)
+                    if md.rstrip():
+                        blocks.append(md.rstrip())
+                elif "text/plain" in data:
+                    txt = data["text/plain"]
+                    txt = "".join(txt) if isinstance(txt, list) else str(txt)
+                    if txt.rstrip():
+                        blocks.append("```text\n" + txt.rstrip() + "\n```")
+                elif "image/png" in data or "image/jpeg" in data:
+                    blocks.append("_[Image output omitted in text summary]_")
+            elif otype == "error":
+                tb = out.get("traceback") or []
+                err = "\n".join(str(t) for t in tb) or \
+                      f"{out.get('ename', 'Error')}: {out.get('evalue', '')}"
+                blocks.append("```text\n" + err + "\n```")
+    return "\n\n".join(blocks) + "\n"
+
+
+def _refresh_notebook_summary(nb) -> None:
+    """Append the executed outputs to the summary the notebook just wrote.
+
+    The notebook cannot write this itself: while its kernel is running, the
+    only copy of the current outputs is in kernel memory, so anything read
+    back from the .ipynb would be the previous run's.
+    """
+    marker = "Saved notebook summary: "
+    target = None
+    for cell in nb.cells:
+        for out in cell.get("outputs") or []:
+            text = out.get("text", "")
+            text = "".join(text) if isinstance(text, list) else str(text)
+            if marker in text:
+                target = Path(text.split(marker, 1)[1].splitlines()[0].strip())
+    if target is None or not target.exists():
+        return
+    body = target.read_text()
+    head = body.split("## Displayed Cell Outputs")[0].rstrip()
+    target.write_text(head + "\n\n" + _render_cell_outputs(nb))
+
+
 def _run_notebook(nb_path: Path, params: dict, run_dir: Path, timeout: int) -> tuple[bool, float]:
     """
     Patch params into a copy of the notebook, execute it, and save the output.
@@ -325,12 +394,17 @@ def _run_notebook(nb_path: Path, params: dict, run_dir: Path, timeout: int) -> t
             )
             if result.returncode == 0:
                 tmp_in.rename(out_nb)
+                # The subprocess holds the outputs; read them back for the summary.
+                nb = nbformat.read(out_nb, as_version=4)
             else:
                 tmp_in.unlink(missing_ok=True)
             success = result.returncode == 0
     finally:
         stop.set()
         ticker.join()
+
+    if success:
+        _refresh_notebook_summary(nb)
 
     return success, time.time() - t0
 
@@ -461,8 +535,12 @@ def main():
     except Exception as _e:
         checks.append((f"disease-focus resolves ({_e})", False, args.disease_focus))
     if any(n >= 2 for n in selected_nums):
+        # Step 1 writes this. Requiring it when step 1 is part of the same run
+        # fails a legitimate fresh run -- the first thing a new user does --
+        # before the delineation has had a chance to produce it.
         _geo = OUT_DIR / f"{NETWORK}_{HSA_MODE}_hsas_{BOUNDARY_VERSION}.geojson"
-        checks.append(("HSA boundaries geojson", _geo.exists(), _geo))
+        if 1 not in selected_nums:
+            checks.append(("HSA boundaries geojson", _geo.exists(), _geo))
     if any(n >= 3 for n in selected_nums):
         # Step 2 writes this. Requiring it when step 2 is part of the same run
         # fails a legitimate fresh run before anything has had a chance to

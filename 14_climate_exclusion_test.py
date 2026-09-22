@@ -22,7 +22,6 @@ from typing import Dict, List, Tuple, Optional
 from sklearn.linear_model import Ridge, ElasticNet
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import r2_score, mean_squared_error
-import matplotlib.pyplot as plt
 
 warnings.filterwarnings('ignore')
 DEFAULT_PIPELINE_OUT_DIR = os.environ.get("HSA_OUT_DIR", os.environ.get("PIPELINE_OUT_DIR", "out"))
@@ -752,7 +751,11 @@ def generate_report(results: Dict, output_path: Path):
 
 
 def main():
-    """Main analysis function."""
+    """Run the corrected final-HSA assignment-certainty analysis.
+
+    Keep this legacy entry point for the modeling notebook, but do not run the
+    old facility-level/misaligned-week calculations defined above.
+    """
     parser = argparse.ArgumentParser(description="Phase 1B: Climate Effects in Excluded Zones")
     parser.add_argument("--network", default="INF", )
     parser.add_argument("--hsa-mode", default="footprint")
@@ -765,66 +768,20 @@ def main():
                         help="HSA boundary version (v6, v7, v8). Must match the run that produced allocation files.")
     args = parser.parse_args()
 
-    global NETWORK, HSA_MODE, DATA_DIR, OUT_DIR, CLIMATE_DIR, ANALYSIS_DIR, OUTPUT_FILE_PREFIX, TEXT_RESULTS_DIR, BOUNDARY_VERSION
-    NETWORK = args.network
-    HSA_MODE = args.hsa_mode
-    BOUNDARY_VERSION = args.boundary_version
-    DATA_DIR = Path(args.data_dir)
-    OUT_DIR = Path(args.out_dir)
-    CLIMATE_DIR = Path(args.climate_dir) if args.climate_dir else (OUT_DIR / "DRIVE_CLIMATE_BY_HSA_DOWNLOAD" / "FINAL_HSA_CLIMATE")
-    ANALYSIS_DIR = Path(args.output_dir)
-    OUTPUT_FILE_PREFIX = f"{NETWORK}_{HSA_MODE}"
-    TEXT_RESULTS_DIR = Path(args.text_output_dir)
-    TEXT_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-    ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
+    from types import SimpleNamespace
+    from connectivity_reanalysis import run as run_corrected
 
-    print("=" * 70)
-    print("PHASE 1B: CLIMATE EFFECTS IN EXCLUDED ZONES")
-    print(f"Network: {NETWORK}")
-    print(f"HSA mode: {HSA_MODE}")
-    print("=" * 70)
-
-    # Load data
-    disease_data = load_hsa_data()
-
-    # Load allocation characteristics
-    hsa_chars = load_allocation_characteristics()
-
-    # Classify HSAs
-    hsa_chars = classify_hsas_by_connectivity(hsa_chars)
-
-    # Merge with disease data
-    merged_data = merge_connectivity_with_disease(disease_data, hsa_chars)
-
-    # Identify column types
-    col_info = identify_climate_columns(merged_data)
-
-    print(f"\nColumn types identified:")
-    print(f"  Climate columns: {len(col_info['climate'])}")
-    print(f"  AR columns: {len(col_info['ar'])}")
-    print(f"  Outcome columns: {len(col_info['outcome'])}")
-
-    # Compare climate contribution by connectivity
-    results = compare_climate_contribution_by_connectivity(merged_data, col_info)
-
-    # Test interaction effects
-    interaction_results = test_climate_interaction_with_probability(merged_data, col_info)
-    results['interaction_analysis'] = interaction_results
-
-    # Save results
-    results_path = ANALYSIS_DIR / out_name("climate_by_connectivity_results.json")
-    with open(results_path, 'w') as f:
-        json.dump(results, f, indent=2)
-    print(f"\nSaved results to {results_path}")
-
-    # Generate report
-    generate_report(results, md_path("climate_connectivity_report.md"))
-
-    print("\n" + "=" * 70)
-    print("PHASE 1B COMPLETE")
-    print("=" * 70)
-
-    return results
+    requested = Path(args.out_dir).resolve()
+    scenario = requested.parent / f"{requested.name}_{args.network}_{args.hsa_mode}_{args.boundary_version}"
+    run_dir = scenario if scenario.exists() else requested
+    print(f"Corrected S6.2 analysis: final-HSA source directory {run_dir}")
+    return run_corrected(SimpleNamespace(
+        network=args.network,
+        mode=args.hsa_mode,
+        boundary_version=args.boundary_version,
+        run_dir=str(run_dir),
+        output_dir=args.output_dir,
+    ))
 
 
 if __name__ == "__main__":

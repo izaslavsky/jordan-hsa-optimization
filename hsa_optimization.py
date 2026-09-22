@@ -2887,6 +2887,7 @@ def promote_major_uncovered_facilities(
     major_pop_threshold=25000.0,
     major_volume_quantile=0.80,
     major_volume_threshold=None,
+    hospital_min_volume_quantile=0.50,
     fallback_radius_multiplier=1.5,
     fallback_min_distance_km=30.0,
     require_same_governorate=True,
@@ -2938,6 +2939,18 @@ def promote_major_uncovered_facilities(
     elif major_volume_threshold is None:
         major_volume_threshold = float('inf')
 
+    # A facility counts as major on type alone, so without a floor a field
+    # hospital recording a handful of visits a year would be promoted to anchor
+    # purely for being called a hospital. Require a hospital to carry at least
+    # the network's median caseload; the floor is derived from the data rather
+    # than fixed, so it travels to a different network without editing.
+    hospital_min_volume = 0.0
+    if hospital_min_volume_quantile is not None and volume_col is not None:
+        _vol = pd.to_numeric(facilities[volume_col], errors='coerce')
+        _vol = _vol[_vol > 0]
+        if len(_vol) > 0:
+            hospital_min_volume = float(_vol.quantile(hospital_min_volume_quantile))
+
     audit_rows = []
     promote_indices = []
 
@@ -2978,8 +2991,9 @@ def promote_major_uncovered_facilities(
         nearest_governorate = str(selected_governorates.loc[nearest_idx]).strip()
 
         volume = float(pd.to_numeric(row.get(volume_col), errors='coerce')) if volume_col else np.nan
+        is_hospital = 'hospital' in fac_type.lower()
         is_major = (
-            'hospital' in fac_type.lower()
+            (is_hospital and pd.notna(volume) and volume >= hospital_min_volume)
             or (pd.notna(volume) and volume >= major_volume_threshold)
             or (pd.notna(volume) and volume >= major_pop_threshold)
         )
@@ -3005,6 +3019,8 @@ def promote_major_uncovered_facilities(
             'healthfacilitytype': fac_type,
             'governorate': fac_governorate,
             'volume': volume,
+            'is_hospital': bool(is_hospital),
+            'hospital_min_volume': hospital_min_volume,
             'is_major_facility': bool(is_major),
             'covered_by_existing_hsa': covered,
             'nearest_hsa': nearest_name,
@@ -3023,6 +3039,8 @@ def promote_major_uncovered_facilities(
         'healthfacilitytype',
         'governorate',
         'volume',
+        'is_hospital',
+        'hospital_min_volume',
         'is_major_facility',
         'covered_by_existing_hsa',
         'nearest_hsa',
@@ -3191,6 +3209,43 @@ def _circle_overlap_fraction(point_a, radius_a_km, point_b, radius_b_km):
     if circle_a.area <= 0:
         return 0.0
     return float(circle_a.intersection(circle_b).area / circle_a.area)
+
+
+def recompute_hsa_population(optimizer, selected, pop_path=None):
+    """Fill hsa_population for every anchor in `selected`.
+
+    The selection loop writes this only for anchors chosen by the greedy pass.
+    Anchors that arrive later -- promoted onto a stronger facility, or added by
+    the coverage repair -- never get it, so the column was null for 7 of 18
+    anchors under FEWEST, 16 of 24 under DISTANCE, and for every anchor of the
+    governorate-targeted mode, whose anchors arrive almost entirely through
+    promotion. A median taken over the non-null subset is not a median of the
+    delineation, and two unrelated modes can land on the same value by accident.
+
+    Uses the optimizer's own coverage mask on its own population grid, so the
+    refilled values are on the same footing as the ones the selection wrote.
+    Counts population within each anchor's service radius, which overlaps
+    between neighbouring anchors; it is a catchment size, not a partition.
+    """
+    import numpy as np
+    out = selected.copy().reset_index(drop=True)
+    # Same grid the selection used: padded full-country bounds, so masks and
+    # pixel indices line up with the values written during optimization.
+    bounds = _cfg('JORDAN_BOUNDS', [34.5, 29.0, 39.5, 33.5])
+    pop_arr, transform = optimizer.pop.get_cropped(bounds)
+    pop_flat = pop_arr.ravel().astype("float64")
+    pops = []
+    for row in out.itertuples():
+        radius_km = getattr(row, "service_radius_km", None)
+        if radius_km is None or not np.isfinite(radius_km):
+            pops.append(np.nan)
+            continue
+        mask = optimizer._get_coverage_mask(row, pop_arr.shape, transform, radius_km)
+        pops.append(float((mask.ravel() * pop_flat).sum()))
+    out["hsa_population"] = pops
+    filled = int(np.isfinite(np.asarray(pops, dtype="float64")).sum())
+    print(f"  hsa_population recomputed for {filled} of {len(out)} anchors")
+    return out
 
 
 def anchor_overlap_report(selected_facilities, overlap_threshold=None, optimizer=None):

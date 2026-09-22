@@ -121,9 +121,14 @@ def main() -> int:
     root = Path(args.root)
 
     violations: list = []
+    # Runtime artefacts are copies the runner writes beside the sources it ran;
+    # scanning them reports the same line twice and can flag a superseded copy.
+    def _generated(name: str) -> bool:
+        return name.startswith("_in_") or name.endswith("_executed.ipynb")
+
     for py in sorted(root.glob("*.py")):
         _scan_text(py.name, py.read_text(errors="ignore"), violations)
-    for nb in sorted(root.glob("*.ipynb")):
+    for nb in sorted(n for n in root.glob("*.ipynb") if not _generated(n.name)):
         try:
             _scan_text(nb.name, _notebook_code(nb), violations)
         except Exception as e:  # malformed notebook shouldn't crash the audit

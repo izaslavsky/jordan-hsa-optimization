@@ -106,8 +106,13 @@ def check_freshness(rep, out, network, mode, version, combo):
     geo = out / f"{network}_{mode}_hsas_{version}.geojson"
     alloc = out / f"{network}_{mode}_hsa_populations_probabilistic_{version}.csv"
     pixels = out / f"pixel_allocations_{network}_{mode}_{version}.csv"
-    wclim = list((out / f"DRIVE_CLIMATE_BY_HSA_DOWNLOAD_{version.upper()}"
-                  / "FINAL_HSA_CLIMATE").glob(f"{network}_HSA_*.csv"))
+    # Elevation is excluded: it is static, exported for a single week, and the
+    # weekly modeling dataset no longer reads it (see prepare_ml_dataset.py).
+    # Counting it here made an elevation re-export look like it had staled a
+    # dataset whose contents it cannot affect.
+    wclim = [p for p in (out / f"DRIVE_CLIMATE_BY_HSA_DOWNLOAD_{version.upper()}"
+                         / "FINAL_HSA_CLIMATE").glob(f"{network}_HSA_*.csv")
+             if not p.name.endswith("_elevation_by_week.csv")]
     dclim = list((out / f"DRIVE_CLIMATE_BY_HSA_DOWNLOAD_DAILY_{version.upper()}")
                  .glob(f"{network}_HSA_*_daily.csv"))
     wds = out / f"modeling/{network}_{mode}_modeling_dataset_{version}.csv"

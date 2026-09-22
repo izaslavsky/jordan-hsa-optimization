@@ -64,13 +64,18 @@ DEFAULT_CORRELATION_THRESHOLD = 0.95  # Remove highly correlated features (r > 0
 from disease_focus import canonical_group, slug
 
 # Climate file suffixes (fixed structure from GEE exports)
+# Elevation is deliberately absent. It is static per HSA, so GEE exports it for
+# a single week; merging that onto an 84-week panel leaves 98.8% of rows empty
+# and the missing-data rule then discards the column anyway. Excluding it here
+# says so outright instead of letting a threshold silently do it, and keeps the
+# weekly dataset independent of elevation re-exports. The within-HSA elevation
+# analysis (S4.5) reads the exports directly.
 CLIMATE_SUFFIXES = [
     'precip_lags.csv',
     'tempdew_wind_lags.csv',
     'evapERA5_lags.csv',
     'soilmoistERA5_lags.csv',
     'water_balance.csv',
-    'elevation_by_week.csv'
 ]
 
 # These will be set by parse_args() in main()
