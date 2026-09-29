@@ -84,9 +84,11 @@ jordan-hsa-optimization/
 │   ├── SYNMODNCD_facility_coordinates.csv   NCD facility locations
 │   ├── SYNMODNCD_groups_of_diagnoses.csv    ICD groupings for NCD network
 │   ├── SYNMODNCD_patient_visits.csv         Synthetic NCD patient visits
+│   ├── SYNMODINF_Facilities_Climate_Features_with_clusters.csv   Step 1 output, precomputed
+│   ├── SYNMODNCD_Facilities_Climate_Features_with_clusters.csv   Step 1 output, precomputed
 │   ├── jordan_boundary.gpkg
 │   ├── jordan_governorates.gpkg
-│   └── hsa_metadata.csv                     JMP sanitation quality scores per HSA
+│   └── {NETWORK}_hsa_metadata.csv           JMP sanitation quality scores, one file per network
 │   [WorldPop rasters not included — see Installation below]
 ├── dlnm/                            DLNM cross-basis module
 ├── out/                             Delineation masters from HSA_FINAL (gitignored)
@@ -110,7 +112,7 @@ jordan-hsa-optimization/
 ├── dlnm/
 │   └── dlnm_crossbasis.py               Natural spline cross-basis and cumulative RR
 ├── hsa_optimization.py                  Core algorithm (v6/v7/v8 via flags)
-├── generate_hsa_metadata.py             Build data/hsa_metadata.csv from coordinates + JMP 2025 lookup
+├── generate_hsa_metadata.py             Build data/{NETWORK}_hsa_metadata.csv from coordinates + JMP 2025 lookup
 ├── hsa_mapping_working.py               HSA visualization helpers
 ├── hsa_objective_analysis.py            Objective function diagnostics
 ├── population_allocation.py             Probabilistic gravity allocation
@@ -139,6 +141,8 @@ jordan-hsa-optimization/
 
 `SYNMOD` files preserve the statistical properties of the real data, including temporal structure, seasonal patterns, and diagnosis-category distributions. Facility coordinates and ICD groupings are identical to the real data. Patient IDs and specific visit records are synthetic.
 
+Two derived files ship alongside the raw synthetic inputs so the pipeline runs without external credentials. `SYNMOD{INF,NCD}_Facilities_Climate_Features_with_clusters.csv` is the output of Step 1, the per-facility climate summary with its cluster label, which otherwise requires an Earth Engine account. `SYNMOD{INF,NCD}_hsa_metadata.csv` holds the JMP sanitation scores joined to each facility, rebuilt by Step 2 and read by the daily DLNM.
+
 **Caveat**: Climate associations and explanatory DLNM results using SYNMOD data should be treated as pipeline validation, not scientific findings. Real outcome data is required for substantive inference.
 
 ---
@@ -149,8 +153,10 @@ jordan-hsa-optimization/
 git clone https://github.com/izaslavsky/jordan-hsa-optimization.git
 cd jordan-hsa-optimization
 pip install -r requirements.txt
-earthengine authenticate   # required for GEE notebooks
+earthengine authenticate   # only for the GEE notebooks: Step 1 and Step 4
 ```
+
+Step 4 needs Earth Engine. Step 1 does not, for the synthetic networks: its output is committed under `data/`, so a clone with no Earth Engine access still runs Steps 2 and 3.
 
 ### WorldPop rasters
 
@@ -174,6 +180,12 @@ jupyter notebook GEE_local_Climate_Features_by_Facilities.ipynb
 ```
 
 Copy the output `{NETWORK}_Facilities_Climate_Features_with_clusters.csv` into `out/`.
+
+**This step is optional.** It needs an authenticated Earth Engine account with a registered cloud
+project. Its output for both synthetic networks is already in `data/`, so a fresh clone can start at
+step 2. Every consumer reads `out/{NETWORK}_Facilities_Climate_Features_with_clusters.csv` when it
+exists and falls back to the copy in `data/` otherwise. Run step 1 yourself to extract a different
+date range or set of variables, or to work with a facility network of your own.
 
 ### Step 2 — HSA delineation (all three variants)
 
@@ -249,7 +261,7 @@ jupyter notebook compare_delineations.ipynb
 ## Workflow diagram
 
 ```
-Step 1  GEE_local_Climate_Features_by_Facilities.ipynb   [run once]
+Step 1  GEE_local_Climate_Features_by_Facilities.ipynb   [optional: output ships in data/]
             │
             ▼
 Step 2  HSA_FINAL.ipynb                                  [run once]
@@ -286,7 +298,7 @@ modeling.ipynb            Track A: DLNM (explanatory)
 
 ## Climate data note
 
-Weekly climate CSVs (CHIRPS + ERA5-Land + TerraClimate) and daily climate CSVs (CHIRPS + ERA5-Land) are not committed to the repository. Run the corresponding GEE notebook (Step 4) with the desired `BOUNDARY_VERSION` to generate them. The chunked variant `GEE_local_HSA_Weekly_Climate_Lagged_chunked.ipynb` is provided for runs that exceed GEE export memory limits.
+Per-HSA climate is not committed, per-facility climate is. Weekly CSVs (CHIRPS + ERA5-Land + TerraClimate) and daily CSVs (CHIRPS + ERA5-Land) depend on the HSA boundaries and so must be generated: run the corresponding GEE notebook (Step 4) with the desired `BOUNDARY_VERSION`. The Step 1 per-facility summary does not depend on any boundary, so its synthetic-network output is committed as `data/SYNMOD{INF,NCD}_Facilities_Climate_Features_with_clusters.csv` and Step 1 can be skipped. The chunked variant `GEE_local_HSA_Weekly_Climate_Lagged_chunked.ipynb` is provided for runs that exceed GEE export memory limits.
 
 The weekly export also emits per-HSA elevation statistics from SRTM: mean, standard deviation, min, max and the 25th/50th/75th percentiles, written as one row per HSA (`*_elevation_by_week.csv`). The spread, not just the mean, is what the within-HSA heterogeneity analysis needs, since an HSA spanning the Jordan Valley and the highlands has a far larger internal climate gradient than a compact urban one. Elevation is produced by the same notebook as the other climate families; there is no separate elevation notebook. To export elevation alone, set `USE_CHIRPS`, `USE_ERA5_HOURLY` and `USE_ERA5_EVP` to `False` and leave `INCLUDE_ELEVATION = True`.
 

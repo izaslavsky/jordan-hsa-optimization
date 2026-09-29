@@ -29,6 +29,8 @@ Outputs in out/dlnm/crossbasis/:
 """
 
 import argparse
+import os
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -42,13 +44,17 @@ from scipy import stats
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_INPUT = BASE_DIR / "out/dlnm/dlnm_dataset.csv"
-DEFAULT_META  = BASE_DIR / "data" / "hsa_metadata.csv"
 DEFAULT_OUTPUT = BASE_DIR / "out/dlnm/crossbasis"
+
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description="DLNM cross-basis analysis (Python)")
     parser.add_argument("--input-csv", default=str(DEFAULT_INPUT))
-    parser.add_argument("--meta-csv",  default=str(DEFAULT_META))
+    parser.add_argument("--network",   default=os.environ.get("NETWORK", "INF"),
+                        help="Network whose sanitation metadata to load "
+                             "(default: $NETWORK, else INF). Ignored if --meta-csv is given.")
+    parser.add_argument("--meta-csv",  default=None,
+                        help="Explicit metadata path; overrides --network")
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT))
     parser.add_argument("--min-mean-cases", type=float, default=2.0,
                         help="Min mean weekly cases for per-HSA models (default 2)")
@@ -212,7 +218,18 @@ def main(argv=None):
     args = parse_args(argv)
 
     INPUT_CSV  = Path(args.input_csv)
-    META_CSV   = Path(args.meta_csv)
+    if args.meta_csv:
+        META_CSV = Path(args.meta_csv)
+    else:
+        # imported here, not at module scope: dlnm/ is imported as a library by the
+        # notebooks, and that import should not reach up into the repo root.
+        sys.path.insert(0, str(BASE_DIR))
+        from generate_hsa_metadata import resolve_metadata_path
+        META_CSV, meta_is_legacy = resolve_metadata_path(args.network, BASE_DIR / "data")
+        if meta_is_legacy:
+            print(f"WARNING: falling back to the unscoped {META_CSV.name}; it may have been "
+                  f"written by a different network. Regenerate with "
+                  f"'python generate_hsa_metadata.py --network {args.network}'.")
     OUTPUT_DIR = Path(args.output_dir)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 

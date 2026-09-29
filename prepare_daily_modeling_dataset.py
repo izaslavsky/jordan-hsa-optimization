@@ -5,7 +5,7 @@ Assemble the daily modeling dataset for climate-health analysis.
 Inputs:
   {OUT_DIR}/{NETWORK}_{HSA_MODE}_daily_diarrheal_{ver}.csv  (from generate_daily_disease_counts.py)
   {OUT_DIR}/DRIVE_CLIMATE_BY_HSA_DOWNLOAD_DAILY_{VER}/      (from GEE_local_HSA_Daily_Climate.ipynb)
-  data/hsa_metadata.csv                                      (sanitation quality)
+  data/{NETWORK}_hsa_metadata.csv                            (sanitation quality)
   data/jordan_islamic_calendar.csv                           (Ramadan/Eid periods; daily DLNM only)
 
 Outputs:
@@ -30,8 +30,10 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from generate_hsa_metadata import resolve_metadata_path
+
 BASE_DIR  = Path(__file__).resolve().parent
-META_FILE = BASE_DIR / "data" / "hsa_metadata.csv"
+DATA_DIR  = BASE_DIR / "data"
 
 MAX_LAG = 14
 
@@ -276,8 +278,14 @@ def main():
 
     # 6. Merge sanitation quality
     print("\n[6/6] Merging sanitation quality...")
-    if META_FILE.exists():
-        meta = pd.read_csv(META_FILE)
+    meta_file, meta_is_legacy = resolve_metadata_path(NETWORK, DATA_DIR)
+    if meta_is_legacy:
+        print(f"  WARNING: falling back to the unscoped {meta_file.name}; it may have "
+              f"been written by a different network. Regenerate with "
+              f"'python generate_hsa_metadata.py --network {NETWORK}'.")
+    if meta_file.exists():
+        print(f"  Metadata: {meta_file}")
+        meta = pd.read_csv(meta_file)
         if "infra_quality" in meta.columns:
             df = df.merge(meta[["hsa_id", "infra_quality"]], on="hsa_id", how="left")
             n_miss = df["infra_quality"].isna().sum()
@@ -286,7 +294,7 @@ def main():
             print("  WARNING: 'infra_quality' not found in metadata")
             df["infra_quality"] = np.nan
     else:
-        print(f"  WARNING: metadata file not found at {META_FILE}")
+        print(f"  WARNING: metadata file not found at {meta_file}")
         df["infra_quality"] = np.nan
 
     df.to_csv(OUT_FILE, index=False)

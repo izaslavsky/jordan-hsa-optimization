@@ -1,5 +1,5 @@
 """
-Generate data/hsa_metadata.csv from facility coordinates and public JMP data.
+Generate data/{NETWORK}_hsa_metadata.csv from facility coordinates and public JMP data.
 
 Reads the facility coordinates CSV (any SYNMOD* or real network file) and joins
 each facility to governorate-level JMP 2025 sanitation values stored in
@@ -14,7 +14,11 @@ Sources:
                  stored in jmp_2025_jordan_governorate.csv
 
 Usage:
-    python generate_hsa_metadata.py [--network INF] [--out data/hsa_metadata.csv]
+    python generate_hsa_metadata.py [--network INF] [--out PATH]
+
+The output is named after the coordinates it was built from, so the INF and NCD
+copies coexist. An unscoped name let whichever network ran last overwrite the
+other, silently handing the daily DLNM another network's sanitation scores.
 """
 
 import argparse
@@ -35,6 +39,35 @@ NOTE_INFRA = (
     "JMP 2025 Jordan; 2022 urban/rural safely managed sanitation weighted by "
     "governorate urbanization rate (Jordan DoS Census 2015)"
 )
+
+BASE_DIR = Path(__file__).resolve().parent
+META_SUFFIX = "_hsa_metadata.csv"
+LEGACY_META = "hsa_metadata.csv"
+
+
+def network_prefix_from_coords(coords_path: Path) -> str:
+    """data/SYNMODINF_facility_coordinates.csv -> SYNMODINF"""
+    return coords_path.name.replace("_facility_coordinates.csv", "")
+
+
+def resolve_metadata_path(network: str, data_dir: Path = Path("data")):
+    """
+    Locate one network's sanitation metadata. Returns (path, is_legacy).
+
+    Tries the network's own name, then the SYNMOD and SYN synthetic prefixes,
+    then the unscoped legacy file. Callers should warn when is_legacy is True:
+    that file predates the network-scoped naming and may have been written by a
+    different network. When nothing exists the canonical scoped path is returned
+    so the caller can name it in its error message.
+    """
+    for prefix in (network, f"SYNMOD{network}", f"SYN{network}"):
+        candidate = data_dir / f"{prefix}{META_SUFFIX}"
+        if candidate.exists():
+            return candidate, False
+    legacy = data_dir / LEGACY_META
+    if legacy.exists():
+        return legacy, True
+    return data_dir / f"{network}{META_SUFFIX}", False
 
 
 def load_jmp_table(data_dir: Path) -> pd.DataFrame:
@@ -125,12 +158,13 @@ def main():
         help="Explicit path to facility coordinates CSV (overrides --network)",
     )
     parser.add_argument(
-        "--out", default="data/hsa_metadata.csv",
-        help="Output path (default: data/hsa_metadata.csv)",
+        "--out", default=None,
+        help="Output path (default: data/{prefix}_hsa_metadata.csv, where prefix "
+             "is taken from the coordinates file actually used)",
     )
     args = parser.parse_args()
 
-    data_dir = Path("data")
+    data_dir = BASE_DIR / "data"
     jmp = load_jmp_table(data_dir)
 
     if args.coords:
@@ -146,7 +180,8 @@ def main():
     print(f"Reading:  {coords_path}")
     print(f"JMP ref:  {data_dir / 'jmp_2025_jordan_governorate.csv'}")
     meta = build_metadata(coords_path, jmp)
-    out_path = Path(args.out)
+    out_path = (Path(args.out) if args.out
+                else data_dir / f"{network_prefix_from_coords(coords_path)}{META_SUFFIX}")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     meta.to_csv(out_path, index=False)
     print(f"Wrote {len(meta)} rows to {out_path}")

@@ -304,7 +304,7 @@ Real patient data files (`INF_patient_visits.csv`, `NCD_patient_visits.csv`) are
 
 **Privacy Note**: SYNMOD files preserve temporal structure, seasonal patterns, and diagnosis distributions but contain no real patient records.
 
-`data/hsa_metadata.csv` is generated automatically at the end of `HSA_FINAL.ipynb` (via `generate_hsa_metadata.py`). It joins facility coordinates with governorate-level JMP 2025 sanitation scores from `data/jmp_2025_jordan_governorate.csv`. The key modeling column is `infra_quality` (governorate JMP safely-managed sanitation rate / 100). This file is only used by the daily DLNM pipeline (Track A in `run_climate_models_daily.ipynb`); the weekly modeling pipeline does not use it. To regenerate manually: `python generate_hsa_metadata.py --network INF`.
+`data/{NETWORK}_hsa_metadata.csv` is generated automatically at the end of `HSA_FINAL.ipynb` (via `generate_hsa_metadata.py`). The file is named after the network so that an INF run cannot overwrite NCD's copy; readers resolve it from their own `--network`, and warn if they have to fall back to an older unscoped `hsa_metadata.csv`. It joins facility coordinates with governorate-level JMP 2025 sanitation scores from `data/jmp_2025_jordan_governorate.csv`. The key modeling column is `infra_quality` (governorate JMP safely-managed sanitation rate / 100). This file is only used by the daily DLNM pipeline (Track A in `run_climate_models_daily.ipynb`); the weekly modeling pipeline does not use it. To regenerate manually: `python generate_hsa_metadata.py --network INF`, which writes `data/INF_hsa_metadata.csv`.
 
 **Retrieving JMP 2025 Jordan data**: The values in `data/jmp_2025_jordan_governorate.csv` come from the WHO/UNICEF Joint Monitoring Programme for Water Supply and Sanitation (JMP). To verify or update them:
 
@@ -313,7 +313,7 @@ Real patient data files (`INF_patient_visits.csv`, `NCD_patient_visits.csv`) are
 3. Open the file and locate the sheet with 2022 subnational estimates for "safely managed sanitation" and "safely managed water", broken down by urban/rural
 4. For each of Jordan's 12 governorates, compute the population-weighted average: `urban_fraction × jmp_urban_pct + (1 − urban_fraction) × jmp_rural_pct`, where `urban_fraction` comes from the Jordan Department of Statistics Population and Housing Census 2015 (available at http://www.dos.gov.jo)
 5. Enter the results in `data/jmp_2025_jordan_governorate.csv`, updating `jmp_san_pct_2022` and `jmp_wat_pct_2022` columns; update the `source_note` column to reflect the new data year
-6. Re-run `python generate_hsa_metadata.py --network INF` to refresh `data/hsa_metadata.csv`
+6. Re-run `python generate_hsa_metadata.py --network INF` to refresh `data/INF_hsa_metadata.csv`
 
 The Ma'an governorate value in the current file is marked as estimated. It should be replaced with the value computed from the JMP file using the steps above.
 
