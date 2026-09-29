@@ -274,7 +274,7 @@ def decompose_variance_contributions(df, target_col, output_dir):
     # Save results
     results_df.to_csv(output_dir / out_name('variance_decomposition_results.csv'), index=False)
 
-    with open(output_dir / out_name('variance_decomposition_summary.json'), 'w') as f:
+    with open(output_dir / out_name('variance_decomposition_summary.json'), 'w', encoding='utf-8') as f:
         json.dump(decomposition, f, indent=2)
 
     # Create plots
@@ -558,7 +558,7 @@ def test_climate_on_residuals(df, target_col, output_dir):
         'conclusion': 'Climate explains additional variance' if f_pvalue < 0.05 else 'Climate does not add significant variance'
     }
 
-    with open(output_dir / out_name('residual_analysis_results.json'), 'w') as f:
+    with open(output_dir / out_name('residual_analysis_results.json'), 'w', encoding='utf-8') as f:
         json.dump(residual_results, f, indent=2)
 
     # Plot residuals vs climate predictions
@@ -623,7 +623,7 @@ def create_supplement_table(results_df, decomposition, output_dir):
         # Fallback when optional 'tabulate' dependency is not installed.
         md_table = table.to_string(index=False)
 
-    with open(md_path('supplement_table_variance_decomposition.md'), 'w') as f:
+    with open(md_path('supplement_table_variance_decomposition.md'), 'w', encoding='utf-8') as f:
         f.write("# Table S_X: Variance Decomposition Across Model Specifications\n\n")
         f.write(md_table)
         f.write("\n\n")

@@ -144,7 +144,7 @@ def load_allocation_data(out_dir, network, hsa_mode, sample_size=10000, boundary
     print(f"  Reading sample of {sample_size} rows from allocation file...")
 
     # Count total rows
-    with open(alloc_file, 'r') as f:
+    with open(alloc_file, 'r', encoding='utf-8') as f:
         total_rows = sum(1 for _ in f) - 1  # Subtract header
 
     print(f"  Total rows: {total_rows:,}")
@@ -505,7 +505,7 @@ def create_summary_table(sensitivity_df, output_dir):
         md_table = table.to_markdown(index=False)
     except Exception:
         md_table = table.to_string(index=False)
-    with open(md_path('gravity_sensitivity_summary.md'), 'w') as f:
+    with open(md_path('gravity_sensitivity_summary.md'), 'w', encoding='utf-8') as f:
         f.write("# Table S_X: Gravity Model Parameter Sensitivity Analysis\n\n")
         f.write("Analysis of how α (population weight) and β (distance decay) affect patient allocation patterns.\n\n")
         f.write(md_table)
@@ -582,7 +582,7 @@ def main():
         'robustness_metrics': bootstrap_df.to_dict('records')
     }
 
-    with open(output_dir / out_name('sensitivity_analysis_summary.json'), 'w') as f:
+    with open(output_dir / out_name('sensitivity_analysis_summary.json'), 'w', encoding='utf-8') as f:
         json.dump(results_summary, f, indent=2)
 
     # Create visualizations

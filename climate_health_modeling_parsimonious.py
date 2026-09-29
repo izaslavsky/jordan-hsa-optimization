@@ -556,7 +556,7 @@ def main():
         print(f"  {group:25s} {info['variable']:30s} Δ={info['improvement']:+.4f}")
 
     # Save best per group
-    with open(OUTPUT_DIR / f"{OUTPUT_PREFIX}_best_per_group.json", 'w') as f:
+    with open(OUTPUT_DIR / f"{OUTPUT_PREFIX}_best_per_group.json", 'w', encoding='utf-8') as f:
         json.dump(best_per_group, f, indent=2)
 
     # Build parsimonious model with theory-driven features
@@ -690,7 +690,7 @@ KEY FINDING:
         'interpretation': 'climate_adds_value' if avg_climate_contrib > 0.005 else 'climate_absorbed_by_seasonality'
     }
 
-    with open(OUTPUT_DIR / f"{OUTPUT_PREFIX}_extended_interpretation.json", 'w') as f:
+    with open(OUTPUT_DIR / f"{OUTPUT_PREFIX}_extended_interpretation.json", 'w', encoding='utf-8') as f:
         json.dump(extended_analysis, f, indent=2)
 
     # Summary
@@ -717,7 +717,7 @@ KEY FINDING:
         'improvement_over_baseline': float(best_model['r2'] - baseline_r2)
     }
 
-    with open(OUTPUT_DIR / f"{OUTPUT_PREFIX}_summary.json", 'w') as f:
+    with open(OUTPUT_DIR / f"{OUTPUT_PREFIX}_summary.json", 'w', encoding='utf-8') as f:
         json.dump(summary, f, indent=2)
 
     print(f"\nResults saved to: {OUTPUT_DIR}")

@@ -583,7 +583,7 @@ def create_summary_table(results_df, output_dir):
     except Exception:
         md_table = table.to_string(index=False)
 
-    with open(md_path('extreme_event_summary.md'), 'w') as f:
+    with open(md_path('extreme_event_summary.md'), 'w', encoding='utf-8') as f:
         f.write("# Extreme Event Analysis: Means vs Extremes\n\n")
         f.write("## Model Comparison\n\n")
         f.write(md_table)
@@ -669,7 +669,7 @@ def main():
     create_summary_table(results_df, output_dir)
 
     # Save full results
-    with open(output_dir / out_name('analysis_summary.json'), 'w') as f:
+    with open(output_dir / out_name('analysis_summary.json'), 'w', encoding='utf-8') as f:
         summary = {
             'network': args.network,
             'target': args.target_col,

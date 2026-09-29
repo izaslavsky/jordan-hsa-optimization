@@ -744,7 +744,7 @@ def generate_report(results: Dict, output_path: Path):
     report.append("the AR dominance is likely a real phenomenon (strong temporal autocorrelation")
     report.append("in disease incidence) rather than an artifact of allocation uncertainty.\n")
 
-    with open(output_path, 'w') as f:
+    with open(output_path, 'w', encoding='utf-8') as f:
         f.write('\n'.join(report))
 
     print(f"  Saved report to {output_path}")

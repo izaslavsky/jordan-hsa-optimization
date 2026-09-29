@@ -232,7 +232,7 @@ def check_combo(network, mode, version, out_dir, rep):
         f = out / f"{network}_{mode}_{suffix}_{version}.csv"
         if f.exists():
             if suffix == "residual_overlap":
-                n = sum(1 for _ in f.open()) - 1
+                n = sum(1 for _ in f.open(encoding='utf-8')) - 1
                 rep.add(OK if n == 0 else FAIL,
                         f"residual overlap audit: {n} violation(s)")
         elif required:

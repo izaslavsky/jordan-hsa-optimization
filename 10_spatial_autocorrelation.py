@@ -445,7 +445,7 @@ def run_spatial_autocorrelation_analysis(data_dir, out_dir, network, hsa_mode, t
         }
     }
 
-    with open(output_dir / out_name('spatial_autocorrelation_results.json'), 'w') as f:
+    with open(output_dir / out_name('spatial_autocorrelation_results.json'), 'w', encoding='utf-8') as f:
         json.dump(results, f, indent=2)
 
     weekly_df.to_csv(output_dir / out_name('weekly_morans_i.csv'), index=False)

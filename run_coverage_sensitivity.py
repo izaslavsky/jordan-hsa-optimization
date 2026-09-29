@@ -102,8 +102,8 @@ def run_one(net, cov, execute=True):
         counts[m] = len(gpd.read_file(g)) if g.exists() else None
     print(f"[done] {tag} in {time.time()-t0:.0f}s  counts={counts}", flush=True)
     res_path = BASE/"coverage_sensitivity_results.json"
-    allres = json.load(open(res_path)) if res_path.exists() else {}
-    allres[tag]=counts; json.dump(allres, open(res_path,'w'), indent=2)
+    allres = json.load(open(res_path, encoding='utf-8')) if res_path.exists() else {}
+    allres[tag]=counts; json.dump(allres, open(res_path,'w', encoding='utf-8'), indent=2)
     return counts
 
 if __name__=='__main__':

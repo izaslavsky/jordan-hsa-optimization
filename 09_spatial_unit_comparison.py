@@ -472,7 +472,7 @@ def run_comparison_analysis(data_dir, out_dir, network, hsa_mode, target_col, ou
     # Save results
     comparison_df.to_csv(output_dir / out_name('spatial_unit_comparison.csv'), index=False)
 
-    with open(output_dir / out_name('spatial_unit_comparison.json'), 'w') as f:
+    with open(output_dir / out_name('spatial_unit_comparison.json'), 'w', encoding='utf-8') as f:
         # Convert to JSON-serializable format
         json_results = {}
         for unit, models in all_results.items():
@@ -553,7 +553,7 @@ def create_summary_table(comparison_df, output_dir):
         md_table = summary.to_markdown()
     except Exception:
         md_table = summary.to_string()
-    with open(md_path('spatial_unit_summary.md'), 'w') as f:
+    with open(md_path('spatial_unit_summary.md'), 'w', encoding='utf-8') as f:
         f.write("# Table S_X: Cross-Spatial-Unit Model Comparison\n\n")
         f.write("Test R² across different spatial aggregation units and model types.\n\n")
         f.write(md_table)

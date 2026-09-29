@@ -450,7 +450,7 @@ def create_metadata(df, selected_features, output_path):
             }
 
     # Save to JSON
-    with open(output_path, 'w') as f:
+    with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(metadata, f, indent=2)
 
     print(f"[OK] Metadata saved to {output_path}")

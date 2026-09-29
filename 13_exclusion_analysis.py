@@ -559,7 +559,7 @@ def generate_markdown_report(summary: Dict,
     report.append("   where disease surveillance might use different methods (community health workers, etc.)")
     report.append("")
 
-    with open(output_path, 'w') as f:
+    with open(output_path, 'w', encoding='utf-8') as f:
         f.write('\n'.join(report))
 
     print(f"  Saved report to {output_path}")
@@ -616,7 +616,7 @@ def main():
 
     # Save summary JSON
     summary_path = ANALYSIS_DIR / out_name("exclusion_summary.json")
-    with open(summary_path, 'w') as f:
+    with open(summary_path, 'w', encoding='utf-8') as f:
         json.dump(summary, f, indent=2)
     print(f"\nSaved summary to {summary_path}")
 

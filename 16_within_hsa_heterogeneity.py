@@ -75,7 +75,7 @@ def load_allocation_data(out_dir, network, hsa_mode, sample_size=500000, boundar
     # nrows= takes the FIRST n rows, and the file is written in spatial order,
     # so it returned one corner of the country: 43 of 187 facilities. Sample
     # across the whole file instead.
-    total = sum(1 for _ in open(alloc_file)) - 1
+    total = sum(1 for _ in open(alloc_file, encoding='utf-8')) - 1
     if total > sample_size:
         rng = np.random.default_rng(42)
         keep = set(rng.choice(np.arange(1, total + 1), size=sample_size, replace=False))
@@ -564,7 +564,7 @@ def generate_report(within_stats, between_stats, decomposition, comparison_stats
 
     report.append("")
 
-    with open(md_path('heterogeneity_report.md'), 'w') as f:
+    with open(md_path('heterogeneity_report.md'), 'w', encoding='utf-8') as f:
         f.write('\n'.join(report))
 
     print(f"  Report saved to {output_dir}")
@@ -651,7 +651,7 @@ def main():
         'weighting_comparison': comparison_stats
     }
 
-    with open(output_dir / out_name('heterogeneity_analysis.json'), 'w') as f:
+    with open(output_dir / out_name('heterogeneity_analysis.json'), 'w', encoding='utf-8') as f:
         json.dump(results, f, indent=2)
 
     # Create plots

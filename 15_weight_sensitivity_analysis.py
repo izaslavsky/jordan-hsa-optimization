@@ -294,7 +294,7 @@ def create_sensitivity_table(results_df, output_dir):
         md_lines.append(table.to_string(index=False))
     md_lines.append("\n\n## Key Findings\n")
 
-    with open(md_path('weight_sensitivity_summary.md'), 'w') as f:
+    with open(md_path('weight_sensitivity_summary.md'), 'w', encoding='utf-8') as f:
         f.write('\n'.join(md_lines))
 
     print(f"  Saved summary to {output_dir}")
@@ -400,7 +400,7 @@ def create_elasticity_table(sensitivity_metrics, output_dir):
     except Exception:
         md_lines.append(df.to_string(index=False))
 
-    with open(md_path('weight_elasticities.md'), 'w') as f:
+    with open(md_path('weight_elasticities.md'), 'w', encoding='utf-8') as f:
         f.write('\n'.join(md_lines))
 
 
@@ -492,7 +492,7 @@ def run_weight_sensitivity_analysis(out_dir, network, hsa_mode, output_dir, boun
     # Save results
     results_df.to_csv(output_dir / out_name('weight_sensitivity_raw.csv'), index=False)
 
-    with open(output_dir / out_name('weight_sensitivity_analysis.json'), 'w') as f:
+    with open(output_dir / out_name('weight_sensitivity_analysis.json'), 'w', encoding='utf-8') as f:
         json.dump({
             'base_weights': BASE_WEIGHTS,
             'perturbation_levels': PERTURBATION_LEVELS,

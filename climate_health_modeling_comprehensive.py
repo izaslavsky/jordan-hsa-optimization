@@ -192,7 +192,7 @@ def correlation_feature_selection(train_df, target_col, features, threshold=0.95
         'correlations': {f: float(correlations[f]) for f in top_features}
     }
 
-    with open(OUTPUT_DIR / f"{OUTPUT_PREFIX}_feature_selection_info.json", 'w') as f:
+    with open(OUTPUT_DIR / f"{OUTPUT_PREFIX}_feature_selection_info.json", 'w', encoding='utf-8') as f:
         json.dump(correlation_info, f, indent=2)
 
     return top_features, correlation_info
@@ -666,7 +666,7 @@ def main():
                     print(f"    {contrib_name:30s} {sign}{contrib_val:.4f}")
 
     # Save extended analysis
-    with open(OUTPUT_DIR / f"{OUTPUT_PREFIX}_extended_climate_analysis.json", 'w') as f:
+    with open(OUTPUT_DIR / f"{OUTPUT_PREFIX}_extended_climate_analysis.json", 'w', encoding='utf-8') as f:
         # Convert to serializable format
         serializable = {}
         for model, data in extended_contributions.items():
@@ -716,7 +716,7 @@ signal is {'substantial' if ar_clim_temp_vs_ar_temp > 0.01 else 'modest' if ar_c
     # Save all results
     all_results.to_csv(OUTPUT_DIR / f"{OUTPUT_PREFIX}_all_model_results.csv", index=False)
 
-    with open(OUTPUT_DIR / f"{OUTPUT_PREFIX}_model_summary.json", 'w') as f:
+    with open(OUTPUT_DIR / f"{OUTPUT_PREFIX}_model_summary.json", 'w', encoding='utf-8') as f:
         json.dump(summary, f, indent=2, default=str)
 
     # Print summary
