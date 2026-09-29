@@ -513,10 +513,14 @@ def create_model_summary(results_df, baseline_results):
     Create comprehensive model summary with comparison to baseline.
     """
     # Combine results
+    # ignore_index matters: both frames carry a RangeIndex from 0, so without
+    # it the labels collide. .loc[idxmax()] then returns two rows instead of
+    # one, best_overall's fields become Series (which blows up on ':.4f'), and
+    # the per-feature-set selection over-picks, listing 'baseline' twice.
     all_results = pd.concat([
         pd.DataFrame(baseline_results),
         results_df
-    ])
+    ], ignore_index=True)
 
     # Get test set results only for summary
     test_results = all_results[all_results['split'] == 'test'].copy()
