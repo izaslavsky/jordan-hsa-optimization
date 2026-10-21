@@ -20,6 +20,10 @@ from sklearn.metrics import r2_score
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
+# Size of the wider weather set in the sensitivity model (the "20" in the
+# sensitivity_20_weather_* output columns).
+N_SENSITIVITY_WEATHER = 20
+
 
 def key(value):
     return re.sub(r"[^a-z0-9]", "", str(value).lower())
@@ -140,9 +144,9 @@ def run(args):
     climate = ["T_mean_week_C", "P_total_week"]
     selected = json.loads(paths["feature_selection"].read_text())["selected_features"]
     time_names = {"week_number.1", "week_of_year.1", "month.1", "quarter", "days_since_start", "hsa_encoded"}
-    sensitivity_climate = [c for c in selected if c not in time_names][:20]
-    if len(sensitivity_climate) != 20:
-        raise ValueError("Need 20 selected weather features for the sensitivity check")
+    sensitivity_climate = [c for c in selected if c not in time_names][:N_SENSITIVITY_WEATHER]
+    if len(sensitivity_climate) != N_SENSITIVITY_WEATHER:
+        raise ValueError(f"Need {N_SENSITIVITY_WEATHER} selected weather features for the sensitivity check")
     for name, frame in splits.items():
         needed = ["hsa_id", "week_start", outcome] + baseline + climate + sensitivity_climate
         absent = set(needed) - set(frame.columns)

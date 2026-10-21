@@ -4,8 +4,8 @@ check_no_hardcoding.py — the single audit oracle for the "no hardcoded disease
 values" invariant.
 
 Scans .py files and the tracked pipeline .ipynb notebooks for functional
-hardcoded disease-group labels, outcome-column names, and network->disease
-mappings. Exits non-zero (with a file:line report) if any violation is found,
+hardcoded disease-group labels, outcome-column names, network->disease
+mappings, output directories, and expected counts (len(x) != 18). Exits non-zero (with a file:line report) if any violation is found,
 so an audit is one deterministic command instead of eyeballed greps.
 
 Ignored: comment lines, triple-quoted docstrings, argparse help/description text,
@@ -45,6 +45,14 @@ FORBIDDEN = [
     # by the guard below.
     ("hardcoded output directory",
      re.compile(r"""(?:["']out/|Path\(\s*["']out["']\s*\)|,\s*["']out["']\s*\)|/\s*["']out["'])""")),
+    # The number of HSAs, anchors or facilities is an output of the run. Asserting
+    # it equals a literal (len(x) != 18) rejects every run whose delineation
+    # differs, e.g. a sensitivity setting that adds an anchor. Compare against
+    # the run's own allocation or GeoJSON instead. Literals 0 and 1 are emptiness
+    # and uniqueness tests, not expected sizes, and stay allowed.
+    ("hardcoded expected count",
+     re.compile(r"""(?:\blen\((?:[^()]|\([^()]*\))*\)|\.nunique\(\)|\.shape\[0\])\s*[!=]=\s*(?:[2-9]|[1-9]\d+)(?![\d.])"""
+                r"""|(?<![\d.])(?:[2-9]|[1-9]\d+)\s*[!=]=\s*(?:len\(|\S+\.nunique\(\)|\S+\.shape\[0\])""")),
 ]
 
 # A line that consults the environment is resolving the run directory properly;
@@ -135,15 +143,16 @@ def main() -> int:
             print(f"  WARN: could not scan {nb.name}: {e}")
 
     if not violations:
-        print("check_no_hardcoding: PASS (no functional hardcoded disease values found)")
+        print("check_no_hardcoding: PASS (no functional hardcoded values found)")
         return 0
 
     print(f"check_no_hardcoding: FAIL ({len(violations)} violation(s))")
     for path, lineno, label, text in violations:
         print(f"  {path}:{lineno}: [{label}] {text}")
     print("\nRoute the value through disease_focus.py (canonical_group / "
-          "weekly_outcome_col / daily_outcome_col), or add '# noqa: hardcode' "
-          "if it is genuinely documentation.")
+          "weekly_outcome_col / daily_outcome_col), derive counts from the run's "
+          "own outputs, or add '# noqa: hardcode - <reason>' if the value is "
+          "genuinely fixed.")
     return 1
 
 
